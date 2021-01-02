@@ -38,6 +38,8 @@ public class RSHWNetwork : ModuleRules
 				"Engine",
 				"Slate",
 				"SlateCore",
+                "Networking",
+                "Sockets",
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);
