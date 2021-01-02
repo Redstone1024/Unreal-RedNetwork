@@ -40,7 +40,7 @@ public class RSHWNetwork : ModuleRules
 				"SlateCore",
                 "Networking",
                 "Sockets",
-                "kcp",
+                "KCP",
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);

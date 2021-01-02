@@ -1,7 +1,7 @@
 #include "CoreMinimal.h"
 #include "Modules/ModuleManager.h"
 
-class KCP_API FkcpModule : public IModuleInterface
+class KCP_API FKCPModule : public IModuleInterface
 {
 public:
 
@@ -12,4 +12,4 @@ public:
 
 };
 
-IMPLEMENT_MODULE(FkcpModule, kcp)
+IMPLEMENT_MODULE(FKCPModule, KCP)

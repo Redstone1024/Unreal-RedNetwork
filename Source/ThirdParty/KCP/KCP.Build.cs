@@ -1,9 +1,9 @@
 using System.IO;
 using UnrealBuildTool;
 
-public class kcp : ModuleRules
+public class KCP : ModuleRules
 {
-    public kcp(ReadOnlyTargetRules Target) : base(Target)
+    public KCP(ReadOnlyTargetRules Target) : base(Target)
     {
         PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
