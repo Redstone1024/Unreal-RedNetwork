@@ -187,7 +187,7 @@ void URSHWNetworkClient::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 
 			KCPUnit = nullptr;
 
-			UE_LOG(LogRSHWNetwork, Warning, TEXT("RSHW network client '%s' timeout."), *GetName());
+			UE_LOG(LogRSHWNetwork, Warning, TEXT("RSHW Network Client timeout."));
 
 			OnUnlogin.Broadcast();
 		}
@@ -204,7 +204,7 @@ void URSHWNetworkClient::Activate(bool bReset)
 
 	if (SocketSubsystem == nullptr)
 	{
-		UE_LOG(LogRSHWNetwork, Error, TEXT("Socket subsystem is nullptr in '%s'."), *GetName());
+		UE_LOG(LogRSHWNetwork, Error, TEXT("Socket subsystem is nullptr."));
 		return;
 	}
 
@@ -216,22 +216,22 @@ void URSHWNetworkClient::Activate(bool bReset)
 
 	if (!bIsValid)
 	{
-		UE_LOG(LogRSHWNetwork, Error, TEXT("Server addr invalid in '%s'."), *GetName());
+		UE_LOG(LogRSHWNetwork, Error, TEXT("Server addr invalid."));
 		ServerAddrPtr = nullptr;
 		return;
 	}
 
-	SocketPtr = SocketSubsystem->CreateSocket(NAME_DGram, FString::Printf(TEXT("RSHW Client Socket in '%s'."), *GetName()));
+	SocketPtr = SocketSubsystem->CreateSocket(NAME_DGram, TEXT("RSHW Client Socket"));
 
 	if (SocketPtr == nullptr)
 	{
-		UE_LOG(LogRSHWNetwork, Error, TEXT("Socket creation failed in '%s'."), *GetName());
+		UE_LOG(LogRSHWNetwork, Error, TEXT("Socket creation failed."));
 		return;
 	}
 
 	if (!SocketPtr->SetNonBlocking())
 	{
-		UE_LOG(LogRSHWNetwork, Error, TEXT("Socket set non-blocking failed in '%s'."), *GetName());
+		UE_LOG(LogRSHWNetwork, Error, TEXT("Socket set non-blocking failed."));
 		SocketSubsystem->DestroySocket(SocketPtr);
 		return;
 	}
@@ -240,7 +240,7 @@ void URSHWNetworkClient::Activate(bool bReset)
 	ClientPass.Key = 0;
 	LastRecvTime = FDateTime::Now();
 	LastHeartbeat = FDateTime::MinValue();
-	UE_LOG(LogRSHWNetwork, Log, TEXT("RSHW network client '%s' activate."), *GetName());
+	UE_LOG(LogRSHWNetwork, Log, TEXT("RSHW Network Client activate."));
 
 	SetComponentTickEnabled(true);
 	SetActiveFlag(true);
@@ -270,7 +270,7 @@ void URSHWNetworkClient::Deactivate()
 
 	KCPUnit = nullptr;
 
-	UE_LOG(LogRSHWNetwork, Log, TEXT("RSHW network client '%s' deactivate."), *GetName());
+	UE_LOG(LogRSHWNetwork, Log, TEXT("RSHW Network Client deactivate."));
 
 	SetComponentTickEnabled(false);
 	SetActiveFlag(false);
