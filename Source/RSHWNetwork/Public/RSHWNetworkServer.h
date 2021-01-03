@@ -1,11 +1,13 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Misc/DateTime.h"
 #include "RSHWNetworkType.h"
 #include "Components/ActorComponent.h"
 #include "RSHWNetworkServer.generated.h"
 
 class FSocket;
+class FKCPWrap;
 
 UCLASS(BlueprintType, hidecategories = ("Cooking", "ComponentReplication"), meta = (BlueprintSpawnableComponent))
 class RSHWNETWORK_API URSHWNetworkServer : public UActorComponent
@@ -49,6 +51,9 @@ public:
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "RSHW|Network")
 	FTimespan TimeoutLimit = FTimespan::FromSeconds(8.0);
 
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "RSHW|Network")
+	int32 KCPLogMask = 0;
+
 private:
 
 	FSocket* SocketPtr;
@@ -73,9 +78,12 @@ private:
 		FDateTime RecvTime;
 		FDateTime Heartbeat;
 		TSharedPtr<FInternetAddr> Addr;
+		TSharedPtr<FKCPWrap> KCPUnit;
 	};
 
 	TMap<int32, FRegistrationInfo> Registration;
+
+	int32 UDPSend(int32 ClientID, const uint8* Data, int32 Count);
 
 private:
 

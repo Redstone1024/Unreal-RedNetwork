@@ -1,5 +1,6 @@
 #include "RSHWNetworkServer.h"
 
+#include "KCPWrap.h"
 #include "Logging.h"
 #include "Sockets.h"
 #include "IPAddress.h"
@@ -18,6 +19,15 @@ bool URSHWNetworkServer::Send(int32 ClientID, const TArray<uint8>& Data)
 
 	const FRegistrationInfo& Info = Registration[ClientID];
 
+	return !Info.KCPUnit->Send(Data.GetData(), Data.Num());
+}
+
+int32 URSHWNetworkServer::UDPSend(int32 ClientID, const uint8* Data, int32 Count)
+{
+	if (!IsActive() || !Registration.Contains(ClientID)) return false;
+
+	const FRegistrationInfo& Info = Registration[ClientID];
+
 	SendBuffer.SetNumUninitialized(8, false);
 
 	SendBuffer[0] = Info.Pass.ID >> 0;
@@ -30,10 +40,11 @@ bool URSHWNetworkServer::Send(int32 ClientID, const TArray<uint8>& Data)
 	SendBuffer[6] = Info.Pass.Key >> 16;
 	SendBuffer[7] = Info.Pass.Key >> 24;
 
-	SendBuffer.Append(Data);
+	SendBuffer.Append(Data, Count);
 
 	int32 BytesSend;
-	return SocketPtr->SendTo(SendBuffer.GetData(), SendBuffer.Num(), BytesSend, *Info.Addr) && BytesSend == SendBuffer.Num();
+	SocketPtr->SendTo(SendBuffer.GetData(), SendBuffer.Num(), BytesSend, *Info.Addr);
+	return 0;
 }
 
 void URSHWNetworkServer::BeginPlay()
@@ -58,6 +69,19 @@ void URSHWNetworkServer::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	check(SocketSubsystem);
 
 	const FDateTime NowTime = FDateTime::Now();
+
+	// update kcp
+	{
+		TArray<int32> RegistrationAddr;
+		Registration.GetKeys(RegistrationAddr);
+
+		int32 Current = FPlatformTime::Cycles64() / 1000;
+
+		for (int32 ID : RegistrationAddr)
+		{
+			Registration[ID].KCPUnit->Update(Current);
+		}
+	}
 
 	// send heartbeat 
 	{
@@ -94,7 +118,7 @@ void URSHWNetworkServer::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		int32 BytesRead;
 		TSharedRef<FInternetAddr> SourceAddr = SocketSubsystem->CreateInternetAddr();
 
-		while (true) {
+		while (SocketPtr) {
 
 			RecvBuffer.SetNumUninitialized(65535, false);
 
@@ -190,6 +214,15 @@ void URSHWNetworkServer::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 						NewRegistration.Heartbeat = FDateTime::MinValue();
 						NewRegistration.Addr = SourceAddr;
 
+						NewRegistration.KCPUnit = MakeShared<FKCPWrap>(NewRegistration.Pass.ID, FString::Printf(TEXT("%s[%i]"), *GetName(), NewRegistration.Pass.ID));
+						NewRegistration.KCPUnit->SetTurboMode();
+						NewRegistration.KCPUnit->GetKCPCB().logmask = KCPLogMask;
+
+						NewRegistration.KCPUnit->OutputFunc = [this, ID = NewRegistration.Pass.ID](const uint8* Data, int32 Count) -> int32
+						{
+							return UDPSend(ID, Data, Count);
+						};
+
 						Registration.Add(SourcePass.ID, NewRegistration);
 
 						PreRegistration.Remove(SourceAddrStr);
@@ -212,9 +245,7 @@ void URSHWNetworkServer::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 			// is client request
 			if (Registration.Contains(SourcePass.ID))
 			{
-				DataBuffer.SetNumUninitialized(RecvBuffer.Num() - 8, false);
-				FMemory::Memcpy(DataBuffer.GetData(), RecvBuffer.GetData() + 8, RecvBuffer.Num() - 8);
-				OnRecv.Broadcast(SourcePass.ID, DataBuffer);
+				Registration[SourcePass.ID].KCPUnit->Input(RecvBuffer.GetData() + 8, RecvBuffer.Num() - 8);
 			}
 		}
 	}
@@ -249,6 +280,32 @@ void URSHWNetworkServer::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 				Registration.Remove(ID);
 
 				OnUnlogin.Broadcast(ID);
+			}
+		}
+	}
+
+	// handle kcp recv
+	{
+		TArray<int32> RegistrationAddr;
+		Registration.GetKeys(RegistrationAddr);
+
+		for (int32 ID : RegistrationAddr)
+		{
+			while (Registration[ID].KCPUnit)
+			{
+				int32 Size = Registration[ID].KCPUnit->PeekSize();
+
+				if (Size <= 0) break;
+
+				RecvBuffer.SetNumUninitialized(Size, false);
+
+				Size = Registration[ID].KCPUnit->Recv(RecvBuffer.GetData(), RecvBuffer.Num());
+
+				if (Size <= 0) break;
+
+				RecvBuffer.SetNumUninitialized(Size, false);
+
+				OnRecv.Broadcast(ID, RecvBuffer);
 			}
 		}
 	}

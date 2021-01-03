@@ -1,5 +1,6 @@
 #include "RSHWNetworkClient.h"
 
+#include "KCPWrap.h"
 #include "Logging.h"
 #include "Sockets.h"
 #include "IPAddress.h"
@@ -15,6 +16,13 @@ bool URSHWNetworkClient::Send(const TArray<uint8>& Data)
 {
 	if (!IsActive() || !(ClientPass.ID | ClientPass.Key)) return false;
 
+	return KCPUnit->Send(Data.GetData(), Data.Num());
+}
+
+int32 URSHWNetworkClient::UDPSend(const uint8 * Data, int32 Count)
+{
+	if (!IsActive() || !(ClientPass.ID | ClientPass.Key)) return false;
+
 	SendBuffer.SetNumUninitialized(8, false);
 
 	SendBuffer[0] = ClientPass.ID >> 0;
@@ -27,10 +35,11 @@ bool URSHWNetworkClient::Send(const TArray<uint8>& Data)
 	SendBuffer[6] = ClientPass.Key >> 16;
 	SendBuffer[7] = ClientPass.Key >> 24;
 
-	SendBuffer.Append(Data);
+	SendBuffer.Append(Data, Count);
 
 	int32 BytesSend;
-	return SocketPtr->SendTo(SendBuffer.GetData(), SendBuffer.Num(), BytesSend, *ServerAddrPtr) && BytesSend == SendBuffer.Num();
+	SocketPtr->SendTo(SendBuffer.GetData(), SendBuffer.Num(), BytesSend, *ServerAddrPtr);
+	return 0;
 }
 
 void URSHWNetworkClient::BeginPlay()
@@ -55,6 +64,14 @@ void URSHWNetworkClient::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	check(SocketSubsystem);
 
 	const FDateTime NowTime = FDateTime::Now();
+
+	// update kcp
+	if (KCPUnit)
+	{
+		int32 Current = FPlatformTime::Cycles64() / 1000;
+
+		KCPUnit->Update(Current);
+	}
 
 	// send heartbeat 
 	{
@@ -85,7 +102,7 @@ void URSHWNetworkClient::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		int32 BytesRead;
 		TSharedRef<FInternetAddr> SourceAddr = SocketSubsystem->CreateInternetAddr();
 
-		while (true) {
+		while (SocketPtr) {
 
 			RecvBuffer.SetNumUninitialized(65535, false);
 
@@ -112,6 +129,16 @@ void URSHWNetworkClient::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 			if (!(ClientPass.ID | ClientPass.Key))
 			{
 				ClientPass = SourcePass;
+
+				KCPUnit = MakeShared<FKCPWrap>(ClientPass.ID, GetName());
+				KCPUnit->SetTurboMode();
+				KCPUnit->GetKCPCB().logmask = KCPLogMask;
+
+				KCPUnit->OutputFunc = [this](const uint8* Data, int32 Count)->int32
+				{
+					return UDPSend(Data, Count);
+				};
+
 				OnLogin.Broadcast();
 			}
 
@@ -126,10 +153,28 @@ void URSHWNetworkClient::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 			// is server request
 			if (SourcePass.ID == ClientPass.ID && SourcePass.Key == ClientPass.Key)
 			{
-				DataBuffer.SetNumUninitialized(RecvBuffer.Num() - 8, false);
-				FMemory::Memcpy(DataBuffer.GetData(), RecvBuffer.GetData() + 8, RecvBuffer.Num() - 8);
-				OnRecv.Broadcast(DataBuffer);
+				KCPUnit->Input(RecvBuffer.GetData() + 8, RecvBuffer.Num() - 8);
 			}
+		}
+	}
+
+	// handle kcp recv
+	{
+		while (KCPUnit)
+		{
+			int32 Size = KCPUnit->PeekSize();
+
+			if (Size <= 0) break;
+
+			RecvBuffer.SetNumUninitialized(Size, false);
+
+			Size = KCPUnit->Recv(RecvBuffer.GetData(), RecvBuffer.Num());
+
+			if (Size <= 0) break;
+
+			RecvBuffer.SetNumUninitialized(Size, false);
+
+			OnRecv.Broadcast(RecvBuffer);
 		}
 	}
 
@@ -139,6 +184,8 @@ void URSHWNetworkClient::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		{
 			ClientPass.ID = 0;
 			ClientPass.Key = 0;
+
+			KCPUnit = nullptr;
 
 			UE_LOG(LogRSHWNetwork, Warning, TEXT("RSHW network client '%s' timeout."), *GetName());
 
@@ -220,6 +267,8 @@ void URSHWNetworkClient::Deactivate()
 
 	ClientPass.ID = 0;
 	ClientPass.Key = 0;
+
+	KCPUnit = nullptr;
 
 	UE_LOG(LogRSHWNetwork, Log, TEXT("RSHW network client '%s' deactivate."), *GetName());
 

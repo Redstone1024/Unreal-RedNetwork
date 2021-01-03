@@ -6,6 +6,7 @@
 #include "Components/ActorComponent.h"
 #include "RSHWNetworkClient.generated.h"
 
+class FKCPWrap;
 class FInternetAddr;
 
 UCLASS(BlueprintType, hidecategories = ("Cooking", "ComponentReplication"), meta = (BlueprintSpawnableComponent))
@@ -50,6 +51,9 @@ public:
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "RSHW|Network")
 	FTimespan TimeoutLimit = FTimespan::FromSeconds(8.0);
 
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "RSHW|Network")
+	int32 KCPLogMask = 0;
+
 private:
 
 	TSharedPtr<FInternetAddr> ServerAddrPtr;
@@ -64,6 +68,10 @@ private:
 
 	FDateTime LastRecvTime;
 	FDateTime LastHeartbeat;
+
+	TSharedPtr<FKCPWrap> KCPUnit;
+
+	int32 UDPSend(const uint8* Data, int32 Count);
 
 private:
 
