@@ -73,13 +73,13 @@ private:
 
 	int32 UDPSend(const uint8* Data, int32 Count);
 
-private:
+public:
 
 	//~ Begin UActorComponent Interface
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
-	virtual void Activate(bool bReset) override;
+	virtual void Activate(bool bReset = false) override;
 	virtual void Deactivate() override;
 	//~ End UActorComponent Interface
 
