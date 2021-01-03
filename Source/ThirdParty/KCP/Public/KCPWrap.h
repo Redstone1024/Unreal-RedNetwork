@@ -9,7 +9,11 @@ public:
 
 	FKCPWrap(uint32 Conv);
 
+	FKCPWrap(uint32 Conv, const FString& InDebugName);
+
 	~FKCPWrap();
+
+	ikcpcb& GetKCPCB();
 
 	int Recv(uint8* Data, int32 Count);
 
@@ -37,10 +41,16 @@ public:
 
 	int SetTurboMode();
 
-	TFunction<int(const uint8* Data, int32 Count)> OutputFunc;
+	TFunction<int32(const uint8* Data, int32 Count)> OutputFunc;
+
+	void SetDebugName(const FString& InDebugName);
+
+	const FString& GetDebugName() const;
 
 private:
 
 	ikcpcb* KCPPtr;
+
+	FString DebugName;
 
 };

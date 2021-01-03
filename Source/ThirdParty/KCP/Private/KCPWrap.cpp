@@ -13,20 +13,33 @@ namespace FKCPFuncWrap
 
 	void Writelog(const char* log, ikcpcb* kcp, void* user)
 	{
-		UE_LOG(LogKCP, Log, TEXT("[%i]: %s"), kcp->conv, log);
+		FKCPWrap* KCPWrap = (FKCPWrap*)user;
+		UE_LOG(LogKCP, Log, TEXT("%s: %s"), *KCPWrap->GetDebugName(), ANSI_TO_TCHAR(log));
 	}
 }
 
 FKCPWrap::FKCPWrap(uint32 Conv)
+	: KCPPtr(ikcp_create(Conv, this))
+	, DebugName(FString::Printf(TEXT("[%i]"), Conv))
 {
-	KCPPtr = ikcp_create(Conv, this);
 	KCPPtr->output = &FKCPFuncWrap::Output;
 	KCPPtr->writelog = &FKCPFuncWrap::Writelog;
+}
+
+FKCPWrap::FKCPWrap(uint32 Conv, const FString & InDebugName)
+	: FKCPWrap(Conv)
+{
+	DebugName = InDebugName;
 }
 
 FKCPWrap::~FKCPWrap()
 {
 	ikcp_release(KCPPtr);
+}
+
+ikcpcb & FKCPWrap::GetKCPCB()
+{
+	return *KCPPtr;
 }
 
 int FKCPWrap::Recv(uint8 * Data, int32 Count)
@@ -92,4 +105,14 @@ int FKCPWrap::SetNormalMode()
 int FKCPWrap::SetTurboMode()
 {
 	return SetNoDelay(1, 10, 2, 1);
+}
+
+void FKCPWrap::SetDebugName(const FString & InDebugName)
+{
+	DebugName = InDebugName;
+}
+
+const FString & FKCPWrap::GetDebugName() const
+{
+	return DebugName;
 }
