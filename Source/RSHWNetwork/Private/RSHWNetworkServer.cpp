@@ -6,23 +6,15 @@
 #include "SocketSubsystem.h"
 #include "HAL/UnrealMemory.h"
 
-bool URSHWNetworkServer::SetHandler(TScriptInterface<IRSHWNetworkServerHandler> InHandlerObject)
+URSHWNetworkServer::URSHWNetworkServer(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
 {
-	if (bIsRunning) return false;
-	HandlerObject = InHandlerObject;
-	return true;
-}
-
-bool URSHWNetworkServer::SetBindPort(int32 InPort)
-{
-	if (bIsRunning) return false;
-	Port = InPort;
-	return true;
+	PrimaryComponentTick.bCanEverTick = true;
 }
 
 bool URSHWNetworkServer::Send(int32 ClientID, const TArray<uint8>& Data)
 {
-	if (!bIsRunning || !Registration.Contains(ClientID)) return false;
+	if (!IsActive() || !Registration.Contains(ClientID)) return false;
 
 	const FRegistrationInfo& Info = Registration[ClientID];
 
@@ -44,101 +36,24 @@ bool URSHWNetworkServer::Send(int32 ClientID, const TArray<uint8>& Data)
 	return SocketPtr->SendTo(SendBuffer.GetData(), SendBuffer.Num(), BytesSend, *Info.Addr) && BytesSend == SendBuffer.Num();
 }
 
-bool URSHWNetworkServer::RunServer()
+void URSHWNetworkServer::BeginPlay()
 {
-	if (bIsRunning) return true;
-
-	if (HandlerObject.GetInterface() == nullptr)
-	{
-		UE_LOG(LogRSHWNetwork, Error, TEXT("HandlerObject is nullptr in '%s'."), *GetName());
-		return false;
-	}
-
-	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get();
-	
-	if (SocketSubsystem == nullptr)
-	{
-		UE_LOG(LogRSHWNetwork, Error, TEXT("Socket subsystem is nullptr in '%s'."), *GetName());
-		return false;
-	}
-	
-	SocketPtr = SocketSubsystem->CreateSocket(NAME_DGram, FString::Printf(TEXT("RSHW Server Socket in '%s'."), *GetName()));
-
-	if (SocketPtr == nullptr)
-	{
-		UE_LOG(LogRSHWNetwork, Error, TEXT("Socket creation failed in '%s'."), *GetName());
-		return false;
-	}
-
-	TSharedRef<FInternetAddr> ServerAddr = SocketSubsystem->CreateInternetAddr();
-
-	ServerAddr->SetAnyAddress();
-	ServerAddr->SetPort(Port);
-
-	if (!SocketPtr->Bind(*ServerAddr))
-	{
-		UE_LOG(LogRSHWNetwork, Error, TEXT("Socket bind failed in '%s'."), *GetName());
-		SocketSubsystem->DestroySocket(SocketPtr);
-		return false;
-	}
-
-	if (!SocketPtr->SetNonBlocking())
-	{
-		UE_LOG(LogRSHWNetwork, Error, TEXT("Socket set non-blocking failed in '%s'."), *GetName());
-		SocketSubsystem->DestroySocket(SocketPtr);
-		return false;
-	}
-
-	NextRegistrationID = 1;
-
-	bIsRunning = true;
-	UE_LOG(LogRSHWNetwork, Log, TEXT("RSHW network server '%s' start."), *GetName());
-
-	return true;
+	Super::BeginPlay();
 }
 
-void URSHWNetworkServer::StopServer()
+void URSHWNetworkServer::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	if (!bIsRunning) return;
+	Deactivate();
 
-	TArray<int32> RegistrationAddr;
-	Registration.GetKeys(RegistrationAddr);
-
-	for (int32 ID : RegistrationAddr)
-	{
-		HandlerObject->OnUnlogin(ID);
-	}
-
-	ResetRunningData();
-
-	UE_LOG(LogRSHWNetwork, Log, TEXT("RSHW network server '%s' stop."), *GetName());
+	Super::EndPlay(EndPlayReason);
 }
 
-void URSHWNetworkServer::ResetRunningData()
+void URSHWNetworkServer::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction * ThisTickFunction)
 {
-	bIsRunning = false;
+	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get();
-	check(SocketSubsystem);
-	SocketSubsystem->DestroySocket(SocketPtr);
+	if (!IsActive()) return;
 
-	SendBuffer.SetNum(0);
-	RecvBuffer.SetNum(0);
-	DataBuffer.SetNum(0);
-
-	PreRegistration.Reset();
-	Registration.Reset();
-}
-
-void URSHWNetworkServer::BeginDestroy()
-{
-	StopServer();
-
-	Super::BeginDestroy();
-}
-
-void URSHWNetworkServer::Tick(float DeltaTime)
-{
 	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get();
 	check(SocketSubsystem);
 
@@ -151,7 +66,7 @@ void URSHWNetworkServer::Tick(float DeltaTime)
 
 		for (int32 ID : RegistrationAddr)
 		{
-			if (NowTime - Registration[ID].Heartbeat > FTimespan::FromSeconds(1.0))
+			if (NowTime - Registration[ID].Heartbeat > Heartbeat)
 			{
 				SendBuffer.SetNum(8, false);
 
@@ -279,9 +194,9 @@ void URSHWNetworkServer::Tick(float DeltaTime)
 
 						PreRegistration.Remove(SourceAddrStr);
 
-						HandlerObject->OnLogin(SourcePass.ID);
-
 						UE_LOG(LogRSHWNetwork, Log, TEXT("Register connection [ %i:%i ] in '%s'."), SourcePass.ID, SourcePass.Key, *GetName());
+
+						OnLogin.Broadcast(SourcePass.ID);
 					}
 				}
 			}
@@ -299,7 +214,7 @@ void URSHWNetworkServer::Tick(float DeltaTime)
 			{
 				DataBuffer.SetNumUninitialized(RecvBuffer.Num() - 8, false);
 				FMemory::Memcpy(DataBuffer.GetData(), RecvBuffer.GetData() + 8, RecvBuffer.Num() - 8);
-				HandlerObject->OnRecv(SourcePass.ID, DataBuffer);
+				OnRecv.Broadcast(SourcePass.ID, DataBuffer);
 			}
 		}
 	}
@@ -314,7 +229,7 @@ void URSHWNetworkServer::Tick(float DeltaTime)
 			if (NowTime - PreRegistration[Addr].Time > TimeoutLimit)
 			{
 				UE_LOG(LogRSHWNetwork, Log, TEXT("Pre-registration pass [ %i:%i ] timeout in '%s'."), PreRegistration[Addr].Pass.ID, PreRegistration[Addr].Pass.Key, *GetName());
-				
+
 				PreRegistration.Remove(Addr);
 			}
 		}
@@ -333,8 +248,97 @@ void URSHWNetworkServer::Tick(float DeltaTime)
 
 				Registration.Remove(ID);
 
-				HandlerObject->OnUnlogin(ID);
+				OnUnlogin.Broadcast(ID);
 			}
 		}
 	}
+}
+
+void URSHWNetworkServer::Activate(bool bReset)
+{
+	if (!GetOwner()->GetGameInstance()) return;
+	if (bReset) Deactivate();
+	if (!ShouldActivate()) return;
+
+	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get();
+
+	if (SocketSubsystem == nullptr)
+	{
+		UE_LOG(LogRSHWNetwork, Error, TEXT("Socket subsystem is nullptr in '%s'."), *GetName());
+		return;
+	}
+
+	SocketPtr = SocketSubsystem->CreateSocket(NAME_DGram, FString::Printf(TEXT("RSHW Server Socket in '%s'."), *GetName()));
+
+	if (SocketPtr == nullptr)
+	{
+		UE_LOG(LogRSHWNetwork, Error, TEXT("Socket creation failed in '%s'."), *GetName());
+		return;
+	}
+
+	TSharedRef<FInternetAddr> ServerAddr = SocketSubsystem->CreateInternetAddr();
+
+	ServerAddr->SetAnyAddress();
+	ServerAddr->SetPort(Port);
+
+	if (!SocketPtr->Bind(*ServerAddr))
+	{
+		UE_LOG(LogRSHWNetwork, Error, TEXT("Socket bind failed in '%s'."), *GetName());
+		SocketSubsystem->DestroySocket(SocketPtr);
+		return;
+	}
+
+	if (!SocketPtr->SetNonBlocking())
+	{
+		UE_LOG(LogRSHWNetwork, Error, TEXT("Socket set non-blocking failed in '%s'."), *GetName());
+		SocketSubsystem->DestroySocket(SocketPtr);
+		return;
+	}
+
+	NextRegistrationID = 1;
+
+	UE_LOG(LogRSHWNetwork, Log, TEXT("RSHW network server '%s' activate."), *GetName());
+
+	SetComponentTickEnabled(true);
+	SetActiveFlag(true);
+
+	OnComponentActivated.Broadcast(this, bReset);
+}
+
+void URSHWNetworkServer::Deactivate()
+{
+	if (ShouldActivate()) return;
+
+	TArray<int32> RegistrationAddr;
+	Registration.GetKeys(RegistrationAddr);
+
+	for (int32 ID : RegistrationAddr)
+	{
+		OnUnlogin.Broadcast(ID);
+	}
+
+	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get();
+	check(SocketSubsystem);
+	SocketSubsystem->DestroySocket(SocketPtr);
+
+	SendBuffer.SetNum(0);
+	RecvBuffer.SetNum(0);
+	DataBuffer.SetNum(0);
+
+	PreRegistration.Reset();
+	Registration.Reset();
+
+	UE_LOG(LogRSHWNetwork, Log, TEXT("RSHW network server '%s' deactivate."), *GetName());
+
+	SetComponentTickEnabled(false);
+	SetActiveFlag(false);
+
+	OnComponentDeactivated.Broadcast(this);
+}
+
+void URSHWNetworkServer::BeginDestroy()
+{
+	Deactivate();
+
+	Super::BeginDestroy();
 }

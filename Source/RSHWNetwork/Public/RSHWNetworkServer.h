@@ -1,68 +1,53 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/Object.h"
 #include "RSHWNetworkType.h"
-#include "UObject/Interface.h"
+#include "Components/ActorComponent.h"
 #include "RSHWNetworkServer.generated.h"
 
 class FSocket;
 
-UINTERFACE()
-class RSHWNETWORK_API URSHWNetworkServerHandler : public UInterface
-{
-	GENERATED_BODY()
-};
-
-class RSHWNETWORK_API IRSHWNetworkServerHandler
+UCLASS(BlueprintType, hidecategories = ("Cooking", "ComponentReplication"), meta = (BlueprintSpawnableComponent))
+class RSHWNETWORK_API URSHWNetworkServer : public UActorComponent
 {
 	GENERATED_BODY()
 
 public:
 
-	virtual void OnLogin(int32 ClientID) { }
+	URSHWNetworkServer(const FObjectInitializer& ObjectInitializer);
+	
+public:
 
-	virtual void OnRecv(int32 ClientID, const TArray<uint8>& Data) { }
-
-	virtual void OnUnlogin(int32 ClientID) { }
-
-};
-
-UCLASS()
-class RSHWNETWORK_API URSHWNetworkServer : public UObject, public FTickableGameObject
-{
-	GENERATED_BODY()
+	DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE_OneParam(FLoginSignature, URSHWNetworkServer, OnLogin, int32, ClientID);
+	DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE_TwoParams(FRecvSignature, URSHWNetworkServer, OnRecv, int32, ClientID, const TArray<uint8>&, Data);
+	DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE_OneParam(FUnloginSignature, URSHWNetworkServer, OnUnlogin, int32, ClientID);
 
 public:
 
-	bool IsRunning() const { return bIsRunning; }
+	UPROPERTY(BlueprintAssignable, Category = "RSHW|Network")
+	FLoginSignature OnLogin;
 
-	bool SetHandler(TScriptInterface<IRSHWNetworkServerHandler> InHandlerObject);
+	UPROPERTY(BlueprintAssignable, Category = "RSHW|Network")
+	FRecvSignature OnRecv;
 
-	TScriptInterface<IRSHWNetworkServerHandler> GetHandler() const { return HandlerObject; }
+	UPROPERTY(BlueprintAssignable, Category = "RSHW|Network")
+	FUnloginSignature OnUnlogin;
 
-	bool SetBindPort(int32 InPort = 25565);
+public:
 
-	int32 GetBindPort() const { return Port; }
-
+	UFUNCTION(BlueprintCallable, Category = "RSHW|Network")
 	bool Send(int32 ClientID, const TArray<uint8>& Data);
 
-	bool RunServer();
-
-	void StopServer();
-
 public:
 
-	FTimespan TimeoutLimit = FTimespan::FromSeconds(8.0);
-
-private:
-
-	bool bIsRunning = false;
-
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "RSHW|Network")
 	int32 Port = 25565;
 
-	UPROPERTY()
-	TScriptInterface<IRSHWNetworkServerHandler> HandlerObject;
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "RSHW|Network")
+	FTimespan Heartbeat = FTimespan::FromSeconds(1.0);
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "RSHW|Network")
+	FTimespan TimeoutLimit = FTimespan::FromSeconds(8.0);
 
 private:
 
@@ -92,18 +77,18 @@ private:
 
 	TMap<int32, FRegistrationInfo> Registration;
 
-	void ResetRunningData();
-
 private:
+
+	//~ Begin UActorComponent Interface
+	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	virtual void TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+	virtual void Activate(bool bReset) override;
+	virtual void Deactivate() override;
+	//~ End UActorComponent Interface
 
 	//~ Begin UObject Interface
 	virtual void BeginDestroy() override;
 	//~ End UObject Interface
-
-	//~ Begin FTickableGameObject Interface
-	virtual void Tick(float DeltaTime) override;
-	virtual bool IsTickable() const override { return !IsTemplate() && bIsRunning; }
-	virtual TStatId GetStatId() const override { return GetStatID(); }
-	//~ End FTickableGameObject Interface
 
 };
