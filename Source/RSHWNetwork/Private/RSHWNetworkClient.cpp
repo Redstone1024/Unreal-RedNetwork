@@ -6,12 +6,6 @@
 #include "IPAddress.h"
 #include "SocketSubsystem.h"
 
-URSHWNetworkClient::URSHWNetworkClient(const FObjectInitializer& ObjectInitializer)
-	: Super(ObjectInitializer)
-{
-	PrimaryComponentTick.bCanEverTick = true;
-}
-
 bool URSHWNetworkClient::Send(const TArray<uint8>& Data)
 {
 	if (!IsActive() || !(ClientPass.ID | ClientPass.Key)) return false;
@@ -42,22 +36,8 @@ int32 URSHWNetworkClient::UDPSend(const uint8 * Data, int32 Count)
 	return 0;
 }
 
-void URSHWNetworkClient::BeginPlay()
+void URSHWNetworkClient::Tick(float DeltaTime)
 {
-	Super::BeginPlay();
-}
-
-void URSHWNetworkClient::EndPlay(const EEndPlayReason::Type EndPlayReason)
-{
-	Deactivate();
-
-	Super::EndPlay(EndPlayReason);
-}
-
-void URSHWNetworkClient::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction * ThisTickFunction)
-{
-	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-
 	if (!IsActive()) return;
 
 	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get();
@@ -126,11 +106,11 @@ void URSHWNetworkClient::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 			SourcePass.Key |= (int32)RecvBuffer[7] << 24;
 
 			// is registration request
-			if (!(ClientPass.ID | ClientPass.Key))
+			if (!IsLogged())
 			{
 				ClientPass = SourcePass;
 
-				KCPUnit = MakeShared<FKCPWrap>(ClientPass.ID, GetName());
+				KCPUnit = MakeShared<FKCPWrap>(ClientPass.ID, FString::Printf(TEXT("Client-%i"), ClientPass.ID));
 				KCPUnit->SetTurboMode();
 				KCPUnit->GetKCPCB().logmask = KCPLogMask;
 
@@ -180,7 +160,7 @@ void URSHWNetworkClient::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 
 	// handle timeout
 	{
-		if ((ClientPass.ID | ClientPass.Key) && NowTime - LastRecvTime > TimeoutLimit)
+		if (IsLogged() && NowTime - LastRecvTime > TimeoutLimit)
 		{
 			ClientPass.ID = 0;
 			ClientPass.Key = 0;
@@ -196,9 +176,8 @@ void URSHWNetworkClient::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 
 void URSHWNetworkClient::Activate(bool bReset)
 {
-	if (!GetOwner()->GetGameInstance()) return;
 	if (bReset) Deactivate();
-	if (!ShouldActivate()) return;
+	if (bIsActive) return;
 
 	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get();
 
@@ -242,17 +221,14 @@ void URSHWNetworkClient::Activate(bool bReset)
 	LastHeartbeat = FDateTime::MinValue();
 	UE_LOG(LogRSHWNetwork, Log, TEXT("RSHW Network Client activate."));
 
-	SetComponentTickEnabled(true);
-	SetActiveFlag(true);
-
-	OnComponentActivated.Broadcast(this, bReset);
+	bIsActive = true;
 }
 
 void URSHWNetworkClient::Deactivate()
 {
-	if (ShouldActivate()) return;
+	if (!bIsActive) return;
 
-	if (ClientPass.ID | ClientPass.Key)
+	if (IsLogged())
 	{
 		OnUnlogin.Broadcast();
 	}
@@ -272,10 +248,7 @@ void URSHWNetworkClient::Deactivate()
 
 	UE_LOG(LogRSHWNetwork, Log, TEXT("RSHW Network Client deactivate."));
 
-	SetComponentTickEnabled(false);
-	SetActiveFlag(false);
-
-	OnComponentDeactivated.Broadcast(this);
+	bIsActive = false;
 }
 
 void URSHWNetworkClient::BeginDestroy()

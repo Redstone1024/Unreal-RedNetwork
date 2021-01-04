@@ -7,12 +7,6 @@
 #include "SocketSubsystem.h"
 #include "HAL/UnrealMemory.h"
 
-URSHWNetworkServer::URSHWNetworkServer(const FObjectInitializer& ObjectInitializer)
-	: Super(ObjectInitializer)
-{
-	PrimaryComponentTick.bCanEverTick = true;
-}
-
 bool URSHWNetworkServer::Send(int32 ClientID, const TArray<uint8>& Data)
 {
 	if (!IsActive() || !Registration.Contains(ClientID)) return false;
@@ -47,22 +41,8 @@ int32 URSHWNetworkServer::UDPSend(int32 ClientID, const uint8* Data, int32 Count
 	return 0;
 }
 
-void URSHWNetworkServer::BeginPlay()
+void URSHWNetworkServer::Tick(float DeltaTime)
 {
-	Super::BeginPlay();
-}
-
-void URSHWNetworkServer::EndPlay(const EEndPlayReason::Type EndPlayReason)
-{
-	Deactivate();
-
-	Super::EndPlay(EndPlayReason);
-}
-
-void URSHWNetworkServer::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction * ThisTickFunction)
-{
-	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-
 	if (!IsActive()) return;
 
 	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get();
@@ -214,7 +194,7 @@ void URSHWNetworkServer::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 						NewRegistration.Heartbeat = FDateTime::MinValue();
 						NewRegistration.Addr = SourceAddr;
 
-						NewRegistration.KCPUnit = MakeShared<FKCPWrap>(NewRegistration.Pass.ID, FString::Printf(TEXT("%s[%i]"), *GetPathName(), NewRegistration.Pass.ID));
+						NewRegistration.KCPUnit = MakeShared<FKCPWrap>(NewRegistration.Pass.ID, FString::Printf(TEXT("Server-%i"), NewRegistration.Pass.ID));
 						NewRegistration.KCPUnit->SetTurboMode();
 						NewRegistration.KCPUnit->GetKCPCB().logmask = KCPLogMask;
 
@@ -313,9 +293,8 @@ void URSHWNetworkServer::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 
 void URSHWNetworkServer::Activate(bool bReset)
 {
-	if (!GetOwner()->GetGameInstance()) return;
 	if (bReset) Deactivate();
-	if (!ShouldActivate()) return;
+	if (bIsActive) return;
 
 	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get();
 
@@ -356,15 +335,12 @@ void URSHWNetworkServer::Activate(bool bReset)
 
 	UE_LOG(LogRSHWNetwork, Log, TEXT("RSHW Network Server activate."));
 
-	SetComponentTickEnabled(true);
-	SetActiveFlag(true);
-
-	OnComponentActivated.Broadcast(this, bReset);
+	bIsActive = true;
 }
 
 void URSHWNetworkServer::Deactivate()
 {
-	if (ShouldActivate()) return;
+	if (!bIsActive) return;
 
 	TArray<int32> RegistrationAddr;
 	Registration.GetKeys(RegistrationAddr);
@@ -387,10 +363,7 @@ void URSHWNetworkServer::Deactivate()
 
 	UE_LOG(LogRSHWNetwork, Log, TEXT("RSHW Network Server deactivate."));
 
-	SetComponentTickEnabled(false);
-	SetActiveFlag(false);
-
-	OnComponentDeactivated.Broadcast(this);
+	bIsActive = false;
 }
 
 void URSHWNetworkServer::BeginDestroy()

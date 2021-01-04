@@ -2,21 +2,17 @@
 
 #include "CoreMinimal.h"
 #include "Misc/DateTime.h"
+#include "UObject/Object.h"
 #include "RSHWNetworkType.h"
-#include "Components/ActorComponent.h"
 #include "RSHWNetworkClient.generated.h"
 
 class FKCPWrap;
 class FInternetAddr;
 
-UCLASS(BlueprintType, hidecategories = ("Cooking", "ComponentReplication"), meta = (BlueprintSpawnableComponent))
-class RSHWNETWORK_API URSHWNetworkClient : public UActorComponent
+UCLASS(BlueprintType)
+class RSHWNETWORK_API URSHWNetworkClient : public UObject, public FTickableGameObject
 {
 	GENERATED_BODY()
-
-public:
-
-	URSHWNetworkClient(const FObjectInitializer& ObjectInitializer);
 
 public:
 
@@ -38,6 +34,18 @@ public:
 public:
 
 	UFUNCTION(BlueprintCallable, Category = "RSHW|Network")
+	bool IsActive() const { return bIsActive; }
+
+	UFUNCTION(BlueprintCallable, Category = "RSHW|Network")
+	void Activate(bool bReset = false);
+
+	UFUNCTION(BlueprintCallable, Category = "RSHW|Network")
+	void Deactivate();
+
+	UFUNCTION(BlueprintCallable, Category = "RSHW|Network")
+	bool IsLogged() const { return ClientPass.ID | ClientPass.Key; }
+
+	UFUNCTION(BlueprintCallable, Category = "RSHW|Network")
 	bool Send(const TArray<uint8>& Data);
 
 public:
@@ -55,6 +63,8 @@ public:
 	int32 KCPLogMask = 0;
 
 private:
+
+	bool bIsActive = false;
 
 	TSharedPtr<FInternetAddr> ServerAddrPtr;
 
@@ -75,13 +85,11 @@ private:
 
 public:
 
-	//~ Begin UActorComponent Interface
-	virtual void BeginPlay() override;
-	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
-	virtual void TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
-	virtual void Activate(bool bReset = false) override;
-	virtual void Deactivate() override;
-	//~ End UActorComponent Interface
+	//~ Begin FTickableGameObject Interface
+	virtual void Tick(float DeltaTime) override;
+	virtual bool IsTickable() const override { return !IsTemplate() && IsActive(); }
+	virtual TStatId GetStatId() const override { return GetStatID(); }
+	//~ End FTickableGameObject Interface
 
 	//~ Begin UObject Interface
 	virtual void BeginDestroy() override;
