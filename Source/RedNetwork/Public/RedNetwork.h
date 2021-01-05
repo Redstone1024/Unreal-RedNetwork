@@ -5,7 +5,7 @@
 #include "CoreMinimal.h"
 #include "Modules/ModuleManager.h"
 
-class FRSHWNetworkModule : public IModuleInterface
+class FRedNetworkModule : public IModuleInterface
 {
 public:
 

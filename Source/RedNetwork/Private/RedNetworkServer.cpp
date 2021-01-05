@@ -1,4 +1,4 @@
-#include "RSHWNetworkServer.h"
+#include "RedNetworkServer.h"
 
 #include "KCPWrap.h"
 #include "Logging.h"
@@ -7,7 +7,7 @@
 #include "SocketSubsystem.h"
 #include "HAL/UnrealMemory.h"
 
-bool URSHWNetworkServer::Send(int32 ClientID, const TArray<uint8>& Data)
+bool URedNetworkServer::Send(int32 ClientID, const TArray<uint8>& Data)
 {
 	if (!IsActive() || !Registration.Contains(ClientID)) return false;
 
@@ -16,7 +16,7 @@ bool URSHWNetworkServer::Send(int32 ClientID, const TArray<uint8>& Data)
 	return !Info.KCPUnit->Send(Data.GetData(), Data.Num());
 }
 
-int32 URSHWNetworkServer::UDPSend(int32 ClientID, const uint8* Data, int32 Count)
+int32 URedNetworkServer::UDPSend(int32 ClientID, const uint8* Data, int32 Count)
 {
 	if (!IsActive() || !Registration.Contains(ClientID)) return false;
 
@@ -41,7 +41,7 @@ int32 URSHWNetworkServer::UDPSend(int32 ClientID, const uint8* Data, int32 Count
 	return 0;
 }
 
-void URSHWNetworkServer::Tick(float DeltaTime)
+void URedNetworkServer::Tick(float DeltaTime)
 {
 	if (!IsActive()) return;
 
@@ -107,7 +107,7 @@ void URSHWNetworkServer::Tick(float DeltaTime)
 			if (BytesRead < 8) continue;
 			RecvBuffer.SetNumUninitialized(BytesRead, false);
 
-			FRSHWNetworkPass SourcePass;
+			FRedNetworkPass SourcePass;
 			SourcePass.ID = 0;
 			SourcePass.Key = 0;
 
@@ -138,10 +138,10 @@ void URSHWNetworkServer::Tick(float DeltaTime)
 
 					PreRegistration.Add(SourceAddrStr, NewRegistration);
 
-					UE_LOG(LogRSHWNetwork, Log, TEXT("Pre-register pass %i from %s."), NewRegistration.Pass.ID, *SourceAddrStr);
+					UE_LOG(LogRedNetwork, Log, TEXT("Pre-register pass %i from %s."), NewRegistration.Pass.ID, *SourceAddrStr);
 				}
 
-				const FRSHWNetworkPass& Pass = PreRegistration[SourceAddrStr].Pass;
+				const FRedNetworkPass& Pass = PreRegistration[SourceAddrStr].Pass;
 
 				SendBuffer.SetNum(8, false);
 
@@ -158,7 +158,7 @@ void URSHWNetworkServer::Tick(float DeltaTime)
 				int32 BytesSend;
 				if (SocketPtr->SendTo(SendBuffer.GetData(), SendBuffer.Num(), BytesSend, *SourceAddr) && BytesSend == SendBuffer.Num())
 				{
-					UE_LOG(LogRSHWNetwork, Log, TEXT("Send pre-registration pass %i to %s."), Pass.ID, *SourceAddrStr);
+					UE_LOG(LogRedNetwork, Log, TEXT("Send pre-registration pass %i to %s."), Pass.ID, *SourceAddrStr);
 				}
 			}
 			else
@@ -170,7 +170,7 @@ void URSHWNetworkServer::Tick(float DeltaTime)
 					{
 						Registration[SourcePass.ID].Addr = SourceAddr;
 
-						UE_LOG(LogRSHWNetwork, Log, TEXT("Redirect connection %i."), SourcePass.ID);
+						UE_LOG(LogRedNetwork, Log, TEXT("Redirect connection %i."), SourcePass.ID);
 					}
 
 				}
@@ -207,7 +207,7 @@ void URSHWNetworkServer::Tick(float DeltaTime)
 
 						PreRegistration.Remove(SourceAddrStr);
 
-						UE_LOG(LogRSHWNetwork, Log, TEXT("Register connection %i."), SourcePass.ID);
+						UE_LOG(LogRedNetwork, Log, TEXT("Register connection %i."), SourcePass.ID);
 
 						OnLogin.Broadcast(SourcePass.ID);
 					}
@@ -239,7 +239,7 @@ void URSHWNetworkServer::Tick(float DeltaTime)
 		{
 			if (NowTime - PreRegistration[Addr].Time > TimeoutLimit)
 			{
-				UE_LOG(LogRSHWNetwork, Log, TEXT("Pre-registration pass %i timeout."), PreRegistration[Addr].Pass.ID);
+				UE_LOG(LogRedNetwork, Log, TEXT("Pre-registration pass %i timeout."), PreRegistration[Addr].Pass.ID);
 
 				PreRegistration.Remove(Addr);
 			}
@@ -255,7 +255,7 @@ void URSHWNetworkServer::Tick(float DeltaTime)
 		{
 			if (NowTime - Registration[ID].RecvTime > TimeoutLimit)
 			{
-				UE_LOG(LogRSHWNetwork, Log, TEXT("Registration connection %i timeout."), Registration[ID].Pass.ID);
+				UE_LOG(LogRedNetwork, Log, TEXT("Registration connection %i timeout."), Registration[ID].Pass.ID);
 
 				Registration.Remove(ID);
 
@@ -291,7 +291,7 @@ void URSHWNetworkServer::Tick(float DeltaTime)
 	}
 }
 
-void URSHWNetworkServer::Activate(bool bReset)
+void URedNetworkServer::Activate(bool bReset)
 {
 	if (bReset) Deactivate();
 	if (bIsActive) return;
@@ -300,15 +300,15 @@ void URSHWNetworkServer::Activate(bool bReset)
 
 	if (SocketSubsystem == nullptr)
 	{
-		UE_LOG(LogRSHWNetwork, Error, TEXT("Socket subsystem is nullptr."));
+		UE_LOG(LogRedNetwork, Error, TEXT("Socket subsystem is nullptr."));
 		return;
 	}
 
-	SocketPtr = SocketSubsystem->CreateSocket(NAME_DGram, TEXT("RSHW Server Socket"));
+	SocketPtr = SocketSubsystem->CreateSocket(NAME_DGram, TEXT("Red Server Socket"));
 
 	if (SocketPtr == nullptr)
 	{
-		UE_LOG(LogRSHWNetwork, Error, TEXT("Socket creation failed."));
+		UE_LOG(LogRedNetwork, Error, TEXT("Socket creation failed."));
 		return;
 	}
 
@@ -319,26 +319,26 @@ void URSHWNetworkServer::Activate(bool bReset)
 
 	if (!SocketPtr->Bind(*ServerAddr))
 	{
-		UE_LOG(LogRSHWNetwork, Error, TEXT("Socket bind failed."));
+		UE_LOG(LogRedNetwork, Error, TEXT("Socket bind failed."));
 		SocketSubsystem->DestroySocket(SocketPtr);
 		return;
 	}
 
 	if (!SocketPtr->SetNonBlocking())
 	{
-		UE_LOG(LogRSHWNetwork, Error, TEXT("Socket set non-blocking failed."));
+		UE_LOG(LogRedNetwork, Error, TEXT("Socket set non-blocking failed."));
 		SocketSubsystem->DestroySocket(SocketPtr);
 		return;
 	}
 
 	NextRegistrationID = 1;
 
-	UE_LOG(LogRSHWNetwork, Log, TEXT("RSHW Network Server activate."));
+	UE_LOG(LogRedNetwork, Log, TEXT("Red Network Server activate."));
 
 	bIsActive = true;
 }
 
-void URSHWNetworkServer::Deactivate()
+void URedNetworkServer::Deactivate()
 {
 	if (!bIsActive) return;
 
@@ -361,12 +361,12 @@ void URSHWNetworkServer::Deactivate()
 	PreRegistration.Reset();
 	Registration.Reset();
 
-	UE_LOG(LogRSHWNetwork, Log, TEXT("RSHW Network Server deactivate."));
+	UE_LOG(LogRedNetwork, Log, TEXT("Red Network Server deactivate."));
 
 	bIsActive = false;
 }
 
-void URSHWNetworkServer::BeginDestroy()
+void URedNetworkServer::BeginDestroy()
 {
 	Deactivate();
 

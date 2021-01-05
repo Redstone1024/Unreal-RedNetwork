@@ -3,4 +3,4 @@
 #include "CoreMinimal.h"
 #include "Modules/ModuleManager.h"
 
-DECLARE_LOG_CATEGORY_EXTERN(LogRSHWNetwork, Log, All);
+DECLARE_LOG_CATEGORY_EXTERN(LogRedNetwork, Log, All);

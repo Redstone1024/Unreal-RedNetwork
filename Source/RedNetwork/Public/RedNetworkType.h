@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 
-struct FRSHWNetworkPass
+struct REDNETWORK_API FRedNetworkPass
 {
 	int32 ID;
 	int32 Key;

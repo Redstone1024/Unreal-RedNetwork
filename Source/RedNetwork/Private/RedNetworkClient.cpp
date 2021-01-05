@@ -1,4 +1,4 @@
-#include "RSHWNetworkClient.h"
+#include "RedNetworkClient.h"
 
 #include "KCPWrap.h"
 #include "Logging.h"
@@ -6,14 +6,14 @@
 #include "IPAddress.h"
 #include "SocketSubsystem.h"
 
-bool URSHWNetworkClient::Send(const TArray<uint8>& Data)
+bool URedNetworkClient::Send(const TArray<uint8>& Data)
 {
 	if (!IsActive() || !(ClientPass.ID | ClientPass.Key)) return false;
 
 	return KCPUnit->Send(Data.GetData(), Data.Num());
 }
 
-int32 URSHWNetworkClient::UDPSend(const uint8 * Data, int32 Count)
+int32 URedNetworkClient::UDPSend(const uint8 * Data, int32 Count)
 {
 	if (!IsActive() || !(ClientPass.ID | ClientPass.Key)) return false;
 
@@ -36,7 +36,7 @@ int32 URSHWNetworkClient::UDPSend(const uint8 * Data, int32 Count)
 	return 0;
 }
 
-void URSHWNetworkClient::Tick(float DeltaTime)
+void URedNetworkClient::Tick(float DeltaTime)
 {
 	if (!IsActive()) return;
 
@@ -91,7 +91,7 @@ void URSHWNetworkClient::Tick(float DeltaTime)
 			if (BytesRead < 8) continue;
 			RecvBuffer.SetNumUninitialized(BytesRead, false);
 
-			FRSHWNetworkPass SourcePass;
+			FRedNetworkPass SourcePass;
 			SourcePass.ID = 0;
 			SourcePass.Key = 0;
 
@@ -167,14 +167,14 @@ void URSHWNetworkClient::Tick(float DeltaTime)
 
 			KCPUnit = nullptr;
 
-			UE_LOG(LogRSHWNetwork, Warning, TEXT("RSHW Network Client timeout."));
+			UE_LOG(LogRedNetwork, Warning, TEXT("Red Network Client timeout."));
 
 			OnUnlogin.Broadcast();
 		}
 	}
 }
 
-void URSHWNetworkClient::Activate(bool bReset)
+void URedNetworkClient::Activate(bool bReset)
 {
 	if (bReset) Deactivate();
 	if (bIsActive) return;
@@ -183,7 +183,7 @@ void URSHWNetworkClient::Activate(bool bReset)
 
 	if (SocketSubsystem == nullptr)
 	{
-		UE_LOG(LogRSHWNetwork, Error, TEXT("Socket subsystem is nullptr."));
+		UE_LOG(LogRedNetwork, Error, TEXT("Socket subsystem is nullptr."));
 		return;
 	}
 
@@ -195,22 +195,22 @@ void URSHWNetworkClient::Activate(bool bReset)
 
 	if (!bIsValid)
 	{
-		UE_LOG(LogRSHWNetwork, Error, TEXT("Server addr invalid."));
+		UE_LOG(LogRedNetwork, Error, TEXT("Server addr invalid."));
 		ServerAddrPtr = nullptr;
 		return;
 	}
 
-	SocketPtr = SocketSubsystem->CreateSocket(NAME_DGram, TEXT("RSHW Client Socket"));
+	SocketPtr = SocketSubsystem->CreateSocket(NAME_DGram, TEXT("Red Client Socket"));
 
 	if (SocketPtr == nullptr)
 	{
-		UE_LOG(LogRSHWNetwork, Error, TEXT("Socket creation failed."));
+		UE_LOG(LogRedNetwork, Error, TEXT("Socket creation failed."));
 		return;
 	}
 
 	if (!SocketPtr->SetNonBlocking())
 	{
-		UE_LOG(LogRSHWNetwork, Error, TEXT("Socket set non-blocking failed."));
+		UE_LOG(LogRedNetwork, Error, TEXT("Socket set non-blocking failed."));
 		SocketSubsystem->DestroySocket(SocketPtr);
 		return;
 	}
@@ -219,12 +219,12 @@ void URSHWNetworkClient::Activate(bool bReset)
 	ClientPass.Key = 0;
 	LastRecvTime = FDateTime::Now();
 	LastHeartbeat = FDateTime::MinValue();
-	UE_LOG(LogRSHWNetwork, Log, TEXT("RSHW Network Client activate."));
+	UE_LOG(LogRedNetwork, Log, TEXT("Red Network Client activate."));
 
 	bIsActive = true;
 }
 
-void URSHWNetworkClient::Deactivate()
+void URedNetworkClient::Deactivate()
 {
 	if (!bIsActive) return;
 
@@ -246,12 +246,12 @@ void URSHWNetworkClient::Deactivate()
 
 	KCPUnit = nullptr;
 
-	UE_LOG(LogRSHWNetwork, Log, TEXT("RSHW Network Client deactivate."));
+	UE_LOG(LogRedNetwork, Log, TEXT("Red Network Client deactivate."));
 
 	bIsActive = false;
 }
 
-void URSHWNetworkClient::BeginDestroy()
+void URedNetworkClient::BeginDestroy()
 {
 	Deactivate();
 

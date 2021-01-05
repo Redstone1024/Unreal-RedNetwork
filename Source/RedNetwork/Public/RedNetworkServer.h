@@ -3,60 +3,60 @@
 #include "CoreMinimal.h"
 #include "Misc/DateTime.h"
 #include "UObject/Object.h"
-#include "RSHWNetworkType.h"
-#include "RSHWNetworkServer.generated.h"
+#include "RedNetworkType.h"
+#include "RedNetworkServer.generated.h"
 
 class FSocket;
 class FKCPWrap;
 
 UCLASS(BlueprintType)
-class RSHWNETWORK_API URSHWNetworkServer : public UObject, public FTickableGameObject
+class REDNETWORK_API URedNetworkServer : public UObject, public FTickableGameObject
 {
 	GENERATED_BODY()
 
 public:
 
-	DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE_OneParam(FLoginSignature, URSHWNetworkServer, OnLogin, int32, ClientID);
-	DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE_TwoParams(FRecvSignature, URSHWNetworkServer, OnRecv, int32, ClientID, const TArray<uint8>&, Data);
-	DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE_OneParam(FUnloginSignature, URSHWNetworkServer, OnUnlogin, int32, ClientID);
+	DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE_OneParam(FLoginSignature, URedNetworkServer, OnLogin, int32, ClientID);
+	DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE_TwoParams(FRecvSignature, URedNetworkServer, OnRecv, int32, ClientID, const TArray<uint8>&, Data);
+	DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE_OneParam(FUnloginSignature, URedNetworkServer, OnUnlogin, int32, ClientID);
 
 public:
 
-	UPROPERTY(BlueprintAssignable, Category = "RSHW|Network")
+	UPROPERTY(BlueprintAssignable, Category = "Red|Network")
 	FLoginSignature OnLogin;
 
-	UPROPERTY(BlueprintAssignable, Category = "RSHW|Network")
+	UPROPERTY(BlueprintAssignable, Category = "Red|Network")
 	FRecvSignature OnRecv;
 
-	UPROPERTY(BlueprintAssignable, Category = "RSHW|Network")
+	UPROPERTY(BlueprintAssignable, Category = "Red|Network")
 	FUnloginSignature OnUnlogin;
 
 public:
 
-	UFUNCTION(BlueprintCallable, Category = "RSHW|Network")
+	UFUNCTION(BlueprintCallable, Category = "Red|Network")
 	bool IsActive() const { return bIsActive; }
 
-	UFUNCTION(BlueprintCallable, Category = "RSHW|Network")
+	UFUNCTION(BlueprintCallable, Category = "Red|Network")
 	void Activate(bool bReset = false);
 
-	UFUNCTION(BlueprintCallable, Category = "RSHW|Network")
+	UFUNCTION(BlueprintCallable, Category = "Red|Network")
 	void Deactivate();
 
-	UFUNCTION(BlueprintCallable, Category = "RSHW|Network")
+	UFUNCTION(BlueprintCallable, Category = "Red|Network")
 	bool Send(int32 ClientID, const TArray<uint8>& Data);
 
 public:
 
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "RSHW|Network")
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Red|Network")
 	int32 Port = 25565;
 
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "RSHW|Network")
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Red|Network")
 	FTimespan Heartbeat = FTimespan::FromSeconds(1.0);
 
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "RSHW|Network")
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Red|Network")
 	FTimespan TimeoutLimit = FTimespan::FromSeconds(8.0);
 
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "RSHW|Network")
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Red|Network")
 	int32 KCPLogMask = 0;
 
 private:
@@ -74,14 +74,14 @@ private:
 	struct FPreRegistrationInfo
 	{
 		FDateTime Time;
-		FRSHWNetworkPass Pass;
+		FRedNetworkPass Pass;
 	};
 
 	TMap<FString, FPreRegistrationInfo> PreRegistration;
 
 	struct FRegistrationInfo
 	{
-		FRSHWNetworkPass Pass;
+		FRedNetworkPass Pass;
 		FDateTime RecvTime;
 		FDateTime Heartbeat;
 		TSharedPtr<FInternetAddr> Addr;

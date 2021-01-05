@@ -1,15 +1,15 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "RSHWNetwork.h"
+#include "RedNetwork.h"
 
-#define LOCTEXT_NAMESPACE "FRSHWNetworkModule"
+#define LOCTEXT_NAMESPACE "FRedNetworkModule"
 
-void FRSHWNetworkModule::StartupModule()
+void FRedNetworkModule::StartupModule()
 {
 	// This code will execute after your module is loaded into memory; the exact timing is specified in the .uplugin file per-module
 }
 
-void FRSHWNetworkModule::ShutdownModule()
+void FRedNetworkModule::ShutdownModule()
 {
 	// This function may be called during shutdown to clean up your module.  For modules that support dynamic reloading,
 	// we call this function before unloading the module.
@@ -17,4 +17,4 @@ void FRSHWNetworkModule::ShutdownModule()
 
 #undef LOCTEXT_NAMESPACE
 	
-IMPLEMENT_MODULE(FRSHWNetworkModule, RSHWNetwork)
+IMPLEMENT_MODULE(FRedNetworkModule, RedNetwork)

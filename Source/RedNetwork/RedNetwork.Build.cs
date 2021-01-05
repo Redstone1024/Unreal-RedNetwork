@@ -2,9 +2,9 @@
 
 using UnrealBuildTool;
 
-public class RSHWNetwork : ModuleRules
+public class RedNetwork : ModuleRules
 {
-	public RSHWNetwork(ReadOnlyTargetRules Target) : base(Target)
+	public RedNetwork(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 		
