@@ -8,6 +8,7 @@
 
 class FSocket;
 class FKCPWrap;
+class FInternetAddr;
 
 UCLASS(BlueprintType)
 class REDNETWORK_API URedNetworkServer : public UObject, public FTickableGameObject
@@ -67,19 +68,18 @@ private:
 
 	TArray<uint8> SendBuffer;
 	TArray<uint8> RecvBuffer;
-	TArray<uint8> DataBuffer;
 
-	int32 NextRegistrationID;
+	int32 NextReadyID;
 		
-	struct FPreRegistrationInfo
+	struct FReadyInfo
 	{
 		FDateTime Time;
 		FRedNetworkPass Pass;
 	};
 
-	TMap<FString, FPreRegistrationInfo> PreRegistration;
+	TMap<FString, FReadyInfo> ReadyPass;
 
-	struct FRegistrationInfo
+	struct FConnectionInfo
 	{
 		FRedNetworkPass Pass;
 		FDateTime RecvTime;
@@ -88,9 +88,21 @@ private:
 		TSharedPtr<FKCPWrap> KCPUnit;
 	};
 
-	TMap<int32, FRegistrationInfo> Registration;
+	TMap<int32, FConnectionInfo> Connections;
 
-	int32 UDPSend(int32 ClientID, const uint8* Data, int32 Count);
+	void UDPSend(int32 ClientID, const uint8* Data, int32 Count);
+
+	FDateTime NowTime;
+
+	void UpdateKCP();
+	void SendHeartbeat();
+	void HandleSocketRecv();
+	void SendReadyPass(const TSharedRef<FInternetAddr>& SourceAddr);
+	void RedirectConnection(const FRedNetworkPass& SourcePass, const TSharedRef<FInternetAddr>& SourceAddr);
+	void RegisterConnection(const FRedNetworkPass& SourcePass, const TSharedRef<FInternetAddr>& SourceAddr);
+	void HandleKCPRecv();
+	void HandleExpiredReadyPass();
+	void HandleExpiredConnection();
 
 public:
 

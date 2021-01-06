@@ -6,289 +6,233 @@
 #include "IPAddress.h"
 #include "SocketSubsystem.h"
 #include "HAL/UnrealMemory.h"
+#include "..\Public\RedNetworkServer.h"
 
 bool URedNetworkServer::Send(int32 ClientID, const TArray<uint8>& Data)
 {
-	if (!IsActive() || !Registration.Contains(ClientID)) return false;
+	if (!IsActive() || !Connections.Contains(ClientID)) return false;
 
-	const FRegistrationInfo& Info = Registration[ClientID];
+	const FConnectionInfo& Info = Connections[ClientID];
 
-	return !Info.KCPUnit->Send(Data.GetData(), Data.Num());
+	return Info.KCPUnit->Send(Data.GetData(), Data.Num()) == 0;
 }
 
-int32 URedNetworkServer::UDPSend(int32 ClientID, const uint8* Data, int32 Count)
+void URedNetworkServer::UDPSend(int32 ClientID, const uint8* Data, int32 Count)
 {
-	if (!IsActive() || !Registration.Contains(ClientID)) return false;
+	if (!IsActive() || !Connections.Contains(ClientID)) return;
 
-	const FRegistrationInfo& Info = Registration[ClientID];
+	const FConnectionInfo& Info = Connections[ClientID];
 
 	SendBuffer.SetNumUninitialized(8, false);
 
-	SendBuffer[0] = Info.Pass.ID >> 0;
-	SendBuffer[1] = Info.Pass.ID >> 8;
-	SendBuffer[2] = Info.Pass.ID >> 16;
-	SendBuffer[3] = Info.Pass.ID >> 24;
+	Info.Pass.ToBytes(SendBuffer.GetData());
 
-	SendBuffer[4] = Info.Pass.Key >> 0;
-	SendBuffer[5] = Info.Pass.Key >> 8;
-	SendBuffer[6] = Info.Pass.Key >> 16;
-	SendBuffer[7] = Info.Pass.Key >> 24;
-
-	SendBuffer.Append(Data, Count);
+	if (Count != 0) SendBuffer.Append(Data, Count);
 
 	int32 BytesSend;
 	SocketPtr->SendTo(SendBuffer.GetData(), SendBuffer.Num(), BytesSend, *Info.Addr);
-	return 0;
+}
+
+void URedNetworkServer::UpdateKCP()
+{
+	int32 Current = FPlatformTime::Cycles64() / 1000;
+
+	for (auto Info : Connections)
+	{
+		Info.Value.KCPUnit->Update(Current);
+	}
+}
+
+void URedNetworkServer::SendHeartbeat()
+{
+	for (auto Info : Connections)
+	{
+		UDPSend(Info.Key, nullptr, 0);
+	}
+}
+
+void URedNetworkServer::HandleSocketRecv()
+{
+	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get();
+	check(SocketSubsystem);
+	check(SocketPtr);
+	int32 BytesRead;
+
+	while (SocketPtr) {
+
+		TSharedRef<FInternetAddr> SourceAddr = SocketSubsystem->CreateInternetAddr();
+
+		RecvBuffer.SetNumUninitialized(65535, false);
+
+		if (!SocketPtr->RecvFrom(RecvBuffer.GetData(), RecvBuffer.Num(), BytesRead, *SourceAddr)) break;
+
+		if (RecvBuffer.Num() < 8) continue;
+		RecvBuffer.SetNumUninitialized(BytesRead, false);
+
+		FRedNetworkPass SourcePass(RecvBuffer.GetData());
+
+		if (!SourcePass.IsValid())
+		{
+			SendReadyPass(SourceAddr);
+			continue;
+		}
+
+		RedirectConnection(SourcePass, SourceAddr);
+		RegisterConnection(SourcePass, SourceAddr);
+	
+		if (!Connections.Contains(SourcePass.ID)) continue;
+
+		Connections[SourcePass.ID].RecvTime = NowTime;
+
+		if (RecvBuffer.Num() == 8) continue;
+
+		if (Connections.Contains(SourcePass.ID))
+		{
+			Connections[SourcePass.ID].KCPUnit->Input(RecvBuffer.GetData() + 8, RecvBuffer.Num() - 8);
+		}
+	}
+}
+
+void URedNetworkServer::SendReadyPass(const TSharedRef<FInternetAddr>& SourceAddr)
+{
+	FString SourceAddrStr = SourceAddr->ToString(true);
+
+	if (!ReadyPass.Contains(SourceAddrStr))
+	{
+		FReadyInfo NewReadyPass;
+		NewReadyPass.Time = NowTime;
+		NewReadyPass.Pass.ID = NextReadyID++;
+		NewReadyPass.Pass.RandKey();
+
+		ReadyPass.Add(SourceAddrStr, NewReadyPass);
+
+		UE_LOG(LogRedNetwork, Log, TEXT("Ready pass %i from %s."), NewReadyPass.Pass.ID, *SourceAddrStr);
+	}
+
+	const FRedNetworkPass& Pass = ReadyPass[SourceAddrStr].Pass;
+
+	SendBuffer.SetNum(8, false);
+
+	Pass.ToBytes(SendBuffer.GetData());
+
+	int32 BytesSend;
+	SocketPtr->SendTo(SendBuffer.GetData(), SendBuffer.Num(), BytesSend, *SourceAddr);
+
+	UE_LOG(LogRedNetwork, Log, TEXT("Send ready pass %i to %s."), Pass.ID, *SourceAddrStr);
+}
+
+void URedNetworkServer::RedirectConnection(const FRedNetworkPass& SourcePass, const TSharedRef<FInternetAddr>& SourceAddr)
+{
+	if (!Connections.Contains(SourcePass.ID) || Connections[SourcePass.ID].Pass.Key != SourcePass.Key) return;
+
+	if (!(*Connections[SourcePass.ID].Addr == *SourceAddr))
+	{
+		UE_LOG(LogRedNetwork, Log, TEXT("Redirect connection %i from %s to %s."), SourcePass.ID, *Connections[SourcePass.ID].Addr->ToString(true), *SourceAddr->ToString(true));
+
+		Connections[SourcePass.ID].Addr = SourceAddr;
+	}
+}
+
+void URedNetworkServer::RegisterConnection(const FRedNetworkPass& SourcePass, const TSharedRef<FInternetAddr>& SourceAddr)
+{
+	FString SourceAddrStr = SourceAddr->ToString(true);
+
+	if (!ReadyPass.Contains(SourceAddrStr)) return;
+	if (ReadyPass[SourceAddrStr].Pass.ID != SourcePass.ID || ReadyPass[SourceAddrStr].Pass.Key != SourcePass.Key) return;
+
+	FConnectionInfo NewConnections;
+	NewConnections.Pass = SourcePass;
+	NewConnections.RecvTime = NowTime;
+	NewConnections.Heartbeat = FDateTime::MinValue();
+	NewConnections.Addr = SourceAddr;
+
+	NewConnections.KCPUnit = MakeShared<FKCPWrap>(NewConnections.Pass.ID, FString::Printf(TEXT("Server-%i"), NewConnections.Pass.ID));
+	NewConnections.KCPUnit->SetTurboMode();
+	NewConnections.KCPUnit->GetKCPCB().logmask = KCPLogMask;
+
+	NewConnections.KCPUnit->OutputFunc = [this, ID = NewConnections.Pass.ID](const uint8* Data, int32 Count)->int32
+	{
+		UDPSend(ID, Data, Count);
+		return 0;
+	};
+
+	Connections.Add(SourcePass.ID, NewConnections);
+
+	ReadyPass.Remove(SourceAddrStr);
+
+	UE_LOG(LogRedNetwork, Log, TEXT("Register connection %i."), SourcePass.ID);
+
+	OnLogin.Broadcast(SourcePass.ID);
+}
+
+void URedNetworkServer::HandleKCPRecv()
+{
+	for (auto Info : Connections)
+	{
+		while (Info.Value.KCPUnit)
+		{
+			int32 Size = Info.Value.KCPUnit->PeekSize();
+
+			if (Size < 0) break;
+
+			RecvBuffer.SetNumUninitialized(Size, false);
+
+			Size = Info.Value.KCPUnit->Recv(RecvBuffer.GetData(), RecvBuffer.Num());
+
+			if (Size < 0) break;
+
+			RecvBuffer.SetNumUninitialized(Size, false);
+
+			OnRecv.Broadcast(Info.Key, RecvBuffer);
+		}
+	}
+}
+
+void URedNetworkServer::HandleExpiredReadyPass()
+{
+	TArray<FString> ReadyPassAddr;
+	ReadyPass.GetKeys(ReadyPassAddr);
+
+	for (const FString& Addr : ReadyPassAddr)
+	{
+		if (NowTime - ReadyPass[Addr].Time > TimeoutLimit)
+		{
+			UE_LOG(LogRedNetwork, Log, TEXT("Ready pass %i timeout."), ReadyPass[Addr].Pass.ID);
+
+			ReadyPass.Remove(Addr);
+		}
+	}
+}
+
+void URedNetworkServer::HandleExpiredConnection()
+{
+	TArray<int32> ConnectionsAddr;
+	Connections.GetKeys(ConnectionsAddr);
+
+	for (int32 ID : ConnectionsAddr)
+	{
+		if (NowTime - Connections[ID].RecvTime > TimeoutLimit)
+		{
+			UE_LOG(LogRedNetwork, Log, TEXT("Connections connection %i timeout."), Connections[ID].Pass.ID);
+
+			Connections.Remove(ID);
+
+			OnUnlogin.Broadcast(ID);
+		}
+	}
 }
 
 void URedNetworkServer::Tick(float DeltaTime)
 {
 	if (!IsActive()) return;
+	NowTime = FDateTime::Now();
 
-	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get();
-	check(SocketSubsystem);
-
-	const FDateTime NowTime = FDateTime::Now();
-
-	// update kcp
-	{
-		TArray<int32> RegistrationAddr;
-		Registration.GetKeys(RegistrationAddr);
-
-		int32 Current = FPlatformTime::Cycles64() / 1000;
-
-		for (int32 ID : RegistrationAddr)
-		{
-			Registration[ID].KCPUnit->Update(Current);
-		}
-	}
-
-	// send heartbeat 
-	{
-		TArray<int32> RegistrationAddr;
-		Registration.GetKeys(RegistrationAddr);
-
-		for (int32 ID : RegistrationAddr)
-		{
-			if (NowTime - Registration[ID].Heartbeat > Heartbeat)
-			{
-				SendBuffer.SetNum(8, false);
-
-				SendBuffer[0] = Registration[ID].Pass.ID >> 0;
-				SendBuffer[1] = Registration[ID].Pass.ID >> 8;
-				SendBuffer[2] = Registration[ID].Pass.ID >> 16;
-				SendBuffer[3] = Registration[ID].Pass.ID >> 24;
-
-				SendBuffer[4] = Registration[ID].Pass.Key >> 0;
-				SendBuffer[5] = Registration[ID].Pass.Key >> 8;
-				SendBuffer[6] = Registration[ID].Pass.Key >> 16;
-				SendBuffer[7] = Registration[ID].Pass.Key >> 24;
-
-				int32 BytesSend;
-				if (SocketPtr->SendTo(SendBuffer.GetData(), SendBuffer.Num(), BytesSend, *Registration[ID].Addr) && BytesSend == SendBuffer.Num())
-				{
-					Registration[ID].Heartbeat = NowTime;
-				}
-			}
-		}
-	}
-
-	// handle socket recv
-	{
-		int32 BytesRead;
-		TSharedRef<FInternetAddr> SourceAddr = SocketSubsystem->CreateInternetAddr();
-
-		while (SocketPtr) {
-
-			RecvBuffer.SetNumUninitialized(65535, false);
-
-			if (!SocketPtr->RecvFrom(RecvBuffer.GetData(), RecvBuffer.Num(), BytesRead, *SourceAddr)) break;
-
-			if (BytesRead < 8) continue;
-			RecvBuffer.SetNumUninitialized(BytesRead, false);
-
-			FRedNetworkPass SourcePass;
-			SourcePass.ID = 0;
-			SourcePass.Key = 0;
-
-			SourcePass.ID |= (int32)RecvBuffer[0] << 0;
-			SourcePass.ID |= (int32)RecvBuffer[1] << 8;
-			SourcePass.ID |= (int32)RecvBuffer[2] << 16;
-			SourcePass.ID |= (int32)RecvBuffer[3] << 24;
-
-			SourcePass.Key |= (int32)RecvBuffer[4] << 0;
-			SourcePass.Key |= (int32)RecvBuffer[5] << 8;
-			SourcePass.Key |= (int32)RecvBuffer[6] << 16;
-			SourcePass.Key |= (int32)RecvBuffer[7] << 24;
-
-			FString SourceAddrStr = SourceAddr->ToString(true);
-
-			// is pre-register pass request
-			if (!(SourcePass.ID | SourcePass.Key))
-			{
-				if (!PreRegistration.Contains(SourceAddrStr))
-				{
-					FPreRegistrationInfo NewRegistration;
-					NewRegistration.Time = NowTime;
-					NewRegistration.Pass.ID = NextRegistrationID++;
-					NewRegistration.Pass.Key ^= FMath::Rand() << 0;
-					NewRegistration.Pass.Key ^= FMath::Rand() << 8;
-					NewRegistration.Pass.Key ^= FMath::Rand() << 16;
-					NewRegistration.Pass.Key ^= FMath::Rand() << 24;
-
-					PreRegistration.Add(SourceAddrStr, NewRegistration);
-
-					UE_LOG(LogRedNetwork, Log, TEXT("Pre-register pass %i from %s."), NewRegistration.Pass.ID, *SourceAddrStr);
-				}
-
-				const FRedNetworkPass& Pass = PreRegistration[SourceAddrStr].Pass;
-
-				SendBuffer.SetNum(8, false);
-
-				SendBuffer[0] = Pass.ID >> 0;
-				SendBuffer[1] = Pass.ID >> 8;
-				SendBuffer[2] = Pass.ID >> 16;
-				SendBuffer[3] = Pass.ID >> 24;
-
-				SendBuffer[4] = Pass.Key >> 0;
-				SendBuffer[5] = Pass.Key >> 8;
-				SendBuffer[6] = Pass.Key >> 16;
-				SendBuffer[7] = Pass.Key >> 24;
-
-				int32 BytesSend;
-				if (SocketPtr->SendTo(SendBuffer.GetData(), SendBuffer.Num(), BytesSend, *SourceAddr) && BytesSend == SendBuffer.Num())
-				{
-					UE_LOG(LogRedNetwork, Log, TEXT("Send pre-registration pass %i to %s."), Pass.ID, *SourceAddrStr);
-				}
-			}
-			else
-			{
-				// redirect connection
-				if (Registration.Contains(SourcePass.ID))
-				{
-					if (!(*Registration[SourcePass.ID].Addr == *SourceAddr))
-					{
-						Registration[SourcePass.ID].Addr = SourceAddr;
-
-						UE_LOG(LogRedNetwork, Log, TEXT("Redirect connection %i."), SourcePass.ID);
-					}
-
-				}
-
-				// register connection
-				{
-					bool bIsValidRegistration = false;
-					if (PreRegistration.Contains(SourceAddrStr))
-					{
-						if (PreRegistration[SourceAddrStr].Pass.ID == SourcePass.ID && PreRegistration[SourceAddrStr].Pass.Key == SourcePass.Key)
-						{
-							bIsValidRegistration = true;
-						}
-					}
-
-					if (bIsValidRegistration)
-					{
-						FRegistrationInfo NewRegistration;
-						NewRegistration.Pass = SourcePass;
-						NewRegistration.RecvTime = NowTime;
-						NewRegistration.Heartbeat = FDateTime::MinValue();
-						NewRegistration.Addr = SourceAddr;
-
-						NewRegistration.KCPUnit = MakeShared<FKCPWrap>(NewRegistration.Pass.ID, FString::Printf(TEXT("Server-%i"), NewRegistration.Pass.ID));
-						NewRegistration.KCPUnit->SetTurboMode();
-						NewRegistration.KCPUnit->GetKCPCB().logmask = KCPLogMask;
-
-						NewRegistration.KCPUnit->OutputFunc = [this, ID = NewRegistration.Pass.ID](const uint8* Data, int32 Count) -> int32
-						{
-							return UDPSend(ID, Data, Count);
-						};
-
-						Registration.Add(SourcePass.ID, NewRegistration);
-
-						PreRegistration.Remove(SourceAddrStr);
-
-						UE_LOG(LogRedNetwork, Log, TEXT("Register connection %i."), SourcePass.ID);
-
-						OnLogin.Broadcast(SourcePass.ID);
-					}
-				}
-			}
-
-			if (Registration.Contains(SourcePass.ID))
-			{
-				Registration[SourcePass.ID].RecvTime = NowTime;
-			}
-
-			// is heartbeat request
-			if ((SourcePass.ID | SourcePass.Key) && RecvBuffer.Num() == 8) continue;
-
-			// is client request
-			if (Registration.Contains(SourcePass.ID))
-			{
-				Registration[SourcePass.ID].KCPUnit->Input(RecvBuffer.GetData() + 8, RecvBuffer.Num() - 8);
-			}
-		}
-	}
-
-	// handle pre-registration timeout
-	{
-		TArray<FString> PreRegistrationAddr;
-		PreRegistration.GetKeys(PreRegistrationAddr);
-
-		for (const FString& Addr : PreRegistrationAddr)
-		{
-			if (NowTime - PreRegistration[Addr].Time > TimeoutLimit)
-			{
-				UE_LOG(LogRedNetwork, Log, TEXT("Pre-registration pass %i timeout."), PreRegistration[Addr].Pass.ID);
-
-				PreRegistration.Remove(Addr);
-			}
-		}
-	}
-
-	// handle running timeout
-	{
-		TArray<int32> RegistrationAddr;
-		Registration.GetKeys(RegistrationAddr);
-
-		for (int32 ID : RegistrationAddr)
-		{
-			if (NowTime - Registration[ID].RecvTime > TimeoutLimit)
-			{
-				UE_LOG(LogRedNetwork, Log, TEXT("Registration connection %i timeout."), Registration[ID].Pass.ID);
-
-				Registration.Remove(ID);
-
-				OnUnlogin.Broadcast(ID);
-			}
-		}
-	}
-
-	// handle kcp recv
-	{
-		TArray<int32> RegistrationAddr;
-		Registration.GetKeys(RegistrationAddr);
-
-		for (int32 ID : RegistrationAddr)
-		{
-			while (Registration[ID].KCPUnit)
-			{
-				int32 Size = Registration[ID].KCPUnit->PeekSize();
-
-				if (Size <= 0) break;
-
-				RecvBuffer.SetNumUninitialized(Size, false);
-
-				Size = Registration[ID].KCPUnit->Recv(RecvBuffer.GetData(), RecvBuffer.Num());
-
-				if (Size <= 0) break;
-
-				RecvBuffer.SetNumUninitialized(Size, false);
-
-				OnRecv.Broadcast(ID, RecvBuffer);
-			}
-		}
-	}
+	UpdateKCP();
+	SendHeartbeat();
+	HandleSocketRecv();
+	HandleKCPRecv();
+	HandleExpiredReadyPass();
+	HandleExpiredConnection();
 }
 
 void URedNetworkServer::Activate(bool bReset)
@@ -331,7 +275,7 @@ void URedNetworkServer::Activate(bool bReset)
 		return;
 	}
 
-	NextRegistrationID = 1;
+	NextReadyID = 1;
 
 	UE_LOG(LogRedNetwork, Log, TEXT("Red Network Server activate."));
 
@@ -342,10 +286,10 @@ void URedNetworkServer::Deactivate()
 {
 	if (!bIsActive) return;
 
-	TArray<int32> RegistrationAddr;
-	Registration.GetKeys(RegistrationAddr);
+	TArray<int32> ConnectionsAddr;
+	Connections.GetKeys(ConnectionsAddr);
 
-	for (int32 ID : RegistrationAddr)
+	for (int32 ID : ConnectionsAddr)
 	{
 		OnUnlogin.Broadcast(ID);
 	}
@@ -356,10 +300,9 @@ void URedNetworkServer::Deactivate()
 
 	SendBuffer.SetNum(0);
 	RecvBuffer.SetNum(0);
-	DataBuffer.SetNum(0);
 
-	PreRegistration.Reset();
-	Registration.Reset();
+	ReadyPass.Reset();
+	Connections.Reset();
 
 	UE_LOG(LogRedNetwork, Log, TEXT("Red Network Server deactivate."));
 

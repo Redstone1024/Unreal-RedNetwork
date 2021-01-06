@@ -43,7 +43,7 @@ public:
 	void Deactivate();
 
 	UFUNCTION(BlueprintCallable, Category = "Red|Network")
-	bool IsLogged() const { return ClientPass.ID | ClientPass.Key; }
+	bool IsLogged() const { return ClientPass.IsValid(); }
 
 	UFUNCTION(BlueprintCallable, Category = "Red|Network")
 	bool Send(const TArray<uint8>& Data);
@@ -72,7 +72,6 @@ private:
 
 	TArray<uint8> SendBuffer;
 	TArray<uint8> RecvBuffer;
-	TArray<uint8> DataBuffer;
 
 	FRedNetworkPass ClientPass;
 
@@ -81,7 +80,16 @@ private:
 
 	TSharedPtr<FKCPWrap> KCPUnit;
 
-	int32 UDPSend(const uint8* Data, int32 Count);
+	void UDPSend(const uint8* Data, int32 Count);
+
+	FDateTime NowTime;
+
+	void UpdateKCP();
+	void SendHeartbeat();
+	void HandleSocketRecv();
+	void HandleLoginRecv(const FRedNetworkPass& SourcePass);
+	void HandleKCPRecv();
+	void HandleTimeout();
 
 public:
 

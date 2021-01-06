@@ -5,173 +5,145 @@
 #include "Sockets.h"
 #include "IPAddress.h"
 #include "SocketSubsystem.h"
+#include "..\Public\RedNetworkClient.h"
 
 bool URedNetworkClient::Send(const TArray<uint8>& Data)
 {
-	if (!IsActive() || !(ClientPass.ID | ClientPass.Key)) return false;
+	if (!IsActive() || !IsLogged()) return false;
 
-	return KCPUnit->Send(Data.GetData(), Data.Num());
+	return KCPUnit->Send(Data.GetData(), Data.Num()) == 0;
 }
 
-int32 URedNetworkClient::UDPSend(const uint8 * Data, int32 Count)
+void URedNetworkClient::UDPSend(const uint8 * Data, int32 Count)
 {
-	if (!IsActive() || !(ClientPass.ID | ClientPass.Key)) return false;
+	if (!IsActive()) return;
 
 	SendBuffer.SetNumUninitialized(8, false);
 
-	SendBuffer[0] = ClientPass.ID >> 0;
-	SendBuffer[1] = ClientPass.ID >> 8;
-	SendBuffer[2] = ClientPass.ID >> 16;
-	SendBuffer[3] = ClientPass.ID >> 24;
+	ClientPass.ToBytes(SendBuffer.GetData());
 
-	SendBuffer[4] = ClientPass.Key >> 0;
-	SendBuffer[5] = ClientPass.Key >> 8;
-	SendBuffer[6] = ClientPass.Key >> 16;
-	SendBuffer[7] = ClientPass.Key >> 24;
-
-	SendBuffer.Append(Data, Count);
+	if (Count != 0) SendBuffer.Append(Data, Count);
 
 	int32 BytesSend;
 	SocketPtr->SendTo(SendBuffer.GetData(), SendBuffer.Num(), BytesSend, *ServerAddrPtr);
-	return 0;
+}
+
+void URedNetworkClient::UpdateKCP()
+{
+	if (!KCPUnit) return;
+
+	int32 Current = FPlatformTime::Cycles64() / 1000;
+
+	KCPUnit->Update(Current);
+}
+
+void URedNetworkClient::SendHeartbeat()
+{
+	UDPSend(nullptr, 0);
+}
+
+void URedNetworkClient::HandleSocketRecv()
+{
+	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get();
+	check(SocketSubsystem);
+	check(SocketPtr);
+	int32 BytesRead;
+
+	while (SocketPtr) {
+
+		TSharedRef<FInternetAddr> SourceAddr = SocketSubsystem->CreateInternetAddr();
+
+		RecvBuffer.SetNumUninitialized(65535, false);
+
+		if (!SocketPtr->RecvFrom(RecvBuffer.GetData(), RecvBuffer.Num(), BytesRead, *SourceAddr)) break;
+
+		if (BytesRead < 8) continue;
+		RecvBuffer.SetNumUninitialized(BytesRead, false);
+
+		FRedNetworkPass SourcePass(RecvBuffer.GetData());
+
+		HandleLoginRecv(SourcePass);
+
+		if (!IsLogged()) continue;
+
+		if (SourcePass.ID == ClientPass.ID && SourcePass.Key == ClientPass.Key)
+		{
+			LastRecvTime = NowTime;
+		}
+
+		if (RecvBuffer.Num() == 8) continue;
+
+		if (SourcePass.ID == ClientPass.ID && SourcePass.Key == ClientPass.Key)
+		{
+			KCPUnit->Input(RecvBuffer.GetData() + 8, RecvBuffer.Num() - 8);
+		}
+	}
+}
+
+void URedNetworkClient::HandleLoginRecv(const FRedNetworkPass & SourcePass)
+{
+	if (IsLogged()) return;
+
+	ClientPass = SourcePass;
+
+	KCPUnit = MakeShared<FKCPWrap>(ClientPass.ID, FString::Printf(TEXT("Client-%i"), ClientPass.ID));
+	KCPUnit->SetTurboMode();
+	KCPUnit->GetKCPCB().logmask = KCPLogMask;
+
+	KCPUnit->OutputFunc = [this](const uint8* Data, int32 Count)->int32
+	{
+		UDPSend(Data, Count);
+		return 0;
+	};
+
+	OnLogin.Broadcast();
+}
+
+void URedNetworkClient::HandleKCPRecv()
+{
+	while (KCPUnit)
+	{
+		int32 Size = KCPUnit->PeekSize();
+
+		if (Size < 0) break;
+
+		RecvBuffer.SetNumUninitialized(Size, false);
+
+		Size = KCPUnit->Recv(RecvBuffer.GetData(), RecvBuffer.Num());
+
+		if (Size < 0) break;
+
+		RecvBuffer.SetNumUninitialized(Size, false);
+
+		OnRecv.Broadcast(RecvBuffer);
+	}
+}
+
+void URedNetworkClient::HandleTimeout()
+{
+	if (IsLogged() && NowTime - LastRecvTime > TimeoutLimit)
+	{
+		ClientPass.Reset();
+
+		KCPUnit = nullptr;
+
+		UE_LOG(LogRedNetwork, Warning, TEXT("Red Network Client timeout."));
+
+		OnUnlogin.Broadcast();
+	}
 }
 
 void URedNetworkClient::Tick(float DeltaTime)
 {
 	if (!IsActive()) return;
 
-	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get();
-	check(SocketSubsystem);
+	NowTime = FDateTime::Now();
 
-	const FDateTime NowTime = FDateTime::Now();
-
-	// update kcp
-	if (KCPUnit)
-	{
-		int32 Current = FPlatformTime::Cycles64() / 1000;
-
-		KCPUnit->Update(Current);
-	}
-
-	// send heartbeat 
-	{
-		if (NowTime - LastHeartbeat > Heartbeat)
-		{
-			SendBuffer.SetNumUninitialized(8, false);
-
-			SendBuffer[0] = ClientPass.ID >> 0;
-			SendBuffer[1] = ClientPass.ID >> 8;
-			SendBuffer[2] = ClientPass.ID >> 16;
-			SendBuffer[3] = ClientPass.ID >> 24;
-
-			SendBuffer[4] = ClientPass.Key >> 0;
-			SendBuffer[5] = ClientPass.Key >> 8;
-			SendBuffer[6] = ClientPass.Key >> 16;
-			SendBuffer[7] = ClientPass.Key >> 24;
-
-			int32 BytesSend;
-			if (SocketPtr->SendTo(SendBuffer.GetData(), SendBuffer.Num(), BytesSend, *ServerAddrPtr) && BytesSend == SendBuffer.Num())
-			{
-				LastHeartbeat = NowTime;
-			}
-		}
-	}
-
-	// handle socket recv
-	{
-		int32 BytesRead;
-		TSharedRef<FInternetAddr> SourceAddr = SocketSubsystem->CreateInternetAddr();
-
-		while (SocketPtr) {
-
-			RecvBuffer.SetNumUninitialized(65535, false);
-
-			if (!SocketPtr->RecvFrom(RecvBuffer.GetData(), RecvBuffer.Num(), BytesRead, *SourceAddr)) break;
-
-			if (BytesRead < 8) continue;
-			RecvBuffer.SetNumUninitialized(BytesRead, false);
-
-			FRedNetworkPass SourcePass;
-			SourcePass.ID = 0;
-			SourcePass.Key = 0;
-
-			SourcePass.ID |= (int32)RecvBuffer[0] << 0;
-			SourcePass.ID |= (int32)RecvBuffer[1] << 8;
-			SourcePass.ID |= (int32)RecvBuffer[2] << 16;
-			SourcePass.ID |= (int32)RecvBuffer[3] << 24;
-
-			SourcePass.Key |= (int32)RecvBuffer[4] << 0;
-			SourcePass.Key |= (int32)RecvBuffer[5] << 8;
-			SourcePass.Key |= (int32)RecvBuffer[6] << 16;
-			SourcePass.Key |= (int32)RecvBuffer[7] << 24;
-
-			// is registration request
-			if (!IsLogged())
-			{
-				ClientPass = SourcePass;
-
-				KCPUnit = MakeShared<FKCPWrap>(ClientPass.ID, FString::Printf(TEXT("Client-%i"), ClientPass.ID));
-				KCPUnit->SetTurboMode();
-				KCPUnit->GetKCPCB().logmask = KCPLogMask;
-
-				KCPUnit->OutputFunc = [this](const uint8* Data, int32 Count)->int32
-				{
-					return UDPSend(Data, Count);
-				};
-
-				OnLogin.Broadcast();
-			}
-
-			if (SourcePass.ID == ClientPass.ID && SourcePass.Key == ClientPass.Key)
-			{
-				LastRecvTime = NowTime;
-			}
-
-			// is heartbeat request
-			if ((SourcePass.ID | SourcePass.Key) && RecvBuffer.Num() == 8) continue;
-
-			// is server request
-			if (SourcePass.ID == ClientPass.ID && SourcePass.Key == ClientPass.Key)
-			{
-				KCPUnit->Input(RecvBuffer.GetData() + 8, RecvBuffer.Num() - 8);
-			}
-		}
-	}
-
-	// handle kcp recv
-	{
-		while (KCPUnit)
-		{
-			int32 Size = KCPUnit->PeekSize();
-
-			if (Size <= 0) break;
-
-			RecvBuffer.SetNumUninitialized(Size, false);
-
-			Size = KCPUnit->Recv(RecvBuffer.GetData(), RecvBuffer.Num());
-
-			if (Size <= 0) break;
-
-			RecvBuffer.SetNumUninitialized(Size, false);
-
-			OnRecv.Broadcast(RecvBuffer);
-		}
-	}
-
-	// handle timeout
-	{
-		if (IsLogged() && NowTime - LastRecvTime > TimeoutLimit)
-		{
-			ClientPass.ID = 0;
-			ClientPass.Key = 0;
-
-			KCPUnit = nullptr;
-
-			UE_LOG(LogRedNetwork, Warning, TEXT("Red Network Client timeout."));
-
-			OnUnlogin.Broadcast();
-		}
-	}
+	UpdateKCP();
+	SendHeartbeat();
+	HandleSocketRecv();
+	HandleKCPRecv();
+	HandleTimeout();
 }
 
 void URedNetworkClient::Activate(bool bReset)
@@ -215,8 +187,7 @@ void URedNetworkClient::Activate(bool bReset)
 		return;
 	}
 
-	ClientPass.ID = 0;
-	ClientPass.Key = 0;
+	ClientPass.Reset();
 	LastRecvTime = FDateTime::Now();
 	LastHeartbeat = FDateTime::MinValue();
 	UE_LOG(LogRedNetwork, Log, TEXT("Red Network Client activate."));
@@ -239,10 +210,8 @@ void URedNetworkClient::Deactivate()
 
 	SendBuffer.SetNum(0);
 	RecvBuffer.SetNum(0);
-	DataBuffer.SetNum(0);
 
-	ClientPass.ID = 0;
-	ClientPass.Key = 0;
+	ClientPass.Reset();
 
 	KCPUnit = nullptr;
 
