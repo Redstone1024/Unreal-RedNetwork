@@ -17,6 +17,27 @@ bool URedNetworkServer::Send(int32 ClientID, const TArray<uint8>& Data)
 	return Info.KCPUnit->Send(Data.GetData(), Data.Num()) == 0;
 }
 
+TSharedPtr<FInternetAddr> URedNetworkServer::GetSocketAddr() const
+{
+	if (!SocketPtr) return nullptr;
+
+	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get();
+	check(SocketSubsystem);
+
+	TSharedRef<FInternetAddr> Addr = SocketSubsystem->CreateInternetAddr();
+
+	SocketPtr->GetAddress(*Addr);
+
+	return Addr;
+}
+
+FString URedNetworkServer::GetSocketAddrString() const
+{
+	TSharedPtr<FInternetAddr> Addr = GetSocketAddr();
+
+	return Addr ? Addr->ToString(true) : TEXT("");
+}
+
 void URedNetworkServer::UDPSend(int32 ClientID, const uint8* Data, int32 Count)
 {
 	if (!IsActive() || !Connections.Contains(ClientID)) return;

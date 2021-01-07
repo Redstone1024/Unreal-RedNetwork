@@ -46,6 +46,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Red|Network")
 	bool Send(int32 ClientID, const TArray<uint8>& Data);
 
+	TSharedPtr<FInternetAddr> GetSocketAddr() const;
+
+	UFUNCTION(BlueprintCallable, Category = "Red|Network")
+	FString GetSocketAddrString() const;
+
 public:
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Red|Network")
