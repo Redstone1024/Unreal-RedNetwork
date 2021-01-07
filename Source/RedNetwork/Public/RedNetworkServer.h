@@ -18,7 +18,7 @@ class REDNETWORK_API URedNetworkServer : public UObject, public FTickableGameObj
 public:
 
 	DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE_OneParam(FLoginSignature, URedNetworkServer, OnLogin, int32, ClientID);
-	DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE_TwoParams(FRecvSignature, URedNetworkServer, OnRecv, int32, ClientID, const TArray<uint8>&, Data);
+	DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE_ThreeParams(FRecvSignature, URedNetworkServer, OnRecv, int32, ClientID, uint8, Channel, const TArray<uint8>&, Data);
 	DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE_OneParam(FUnloginSignature, URedNetworkServer, OnUnlogin, int32, ClientID);
 
 public:
@@ -44,7 +44,7 @@ public:
 	void Deactivate();
 
 	UFUNCTION(BlueprintCallable, Category = "Red|Network")
-	bool Send(int32 ClientID, const TArray<uint8>& Data);
+	bool Send(int32 ClientID, uint8 Channel, const TArray<uint8>& Data);
 
 	TSharedPtr<FInternetAddr> GetSocketAddr() const;
 
@@ -90,12 +90,10 @@ private:
 		FDateTime RecvTime;
 		FDateTime Heartbeat;
 		TSharedPtr<FInternetAddr> Addr;
-		TSharedPtr<FKCPWrap> KCPUnit;
+		TArray<TSharedPtr<FKCPWrap>> KCPUnits;
 	};
 
 	TMap<int32, FConnectionInfo> Connections;
-
-	void UDPSend(int32 ClientID, const uint8* Data, int32 Count);
 
 	FDateTime NowTime;
 
@@ -108,6 +106,8 @@ private:
 	void HandleKCPRecv();
 	void HandleExpiredReadyPass();
 	void HandleExpiredConnection();
+
+	void EnsureChannelCreated(int32 ClientID, uint8 Channel);
 
 public:
 

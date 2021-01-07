@@ -7,39 +7,35 @@
 #include "SocketSubsystem.h"
 #include "..\Public\RedNetworkClient.h"
 
-bool URedNetworkClient::Send(const TArray<uint8>& Data)
+bool URedNetworkClient::Send(uint8 Channel, const TArray<uint8>& Data)
 {
 	if (!IsActive() || !IsLogged()) return false;
 
-	return KCPUnit->Send(Data.GetData(), Data.Num()) == 0;
-}
+	EnsureChannelCreated(Channel);
 
-void URedNetworkClient::UDPSend(const uint8 * Data, int32 Count)
-{
-	if (!IsActive()) return;
-
-	SendBuffer.SetNumUninitialized(8, false);
-
-	ClientPass.ToBytes(SendBuffer.GetData());
-
-	if (Count != 0) SendBuffer.Append(Data, Count);
-
-	int32 BytesSend;
-	SocketPtr->SendTo(SendBuffer.GetData(), SendBuffer.Num(), BytesSend, *ServerAddrPtr);
+	return KCPUnits[Channel]->Send(Data.GetData(), Data.Num()) == 0;
 }
 
 void URedNetworkClient::UpdateKCP()
 {
-	if (!KCPUnit) return;
-
 	int32 Current = FPlatformTime::Cycles64() / 1000;
 
-	KCPUnit->Update(Current);
+	for (auto KCPUnit : KCPUnits)
+	{
+		if (!KCPUnit) continue;
+
+		KCPUnit->Update(Current);
+	}
 }
 
 void URedNetworkClient::SendHeartbeat()
 {
-	UDPSend(nullptr, 0);
+	SendBuffer.SetNumUninitialized(8, false);
+
+	ClientPass.ToBytes(SendBuffer.GetData());
+
+	int32 BytesSend;
+	SocketPtr->SendTo(SendBuffer.GetData(), SendBuffer.Num(), BytesSend, *ServerAddrPtr);
 }
 
 void URedNetworkClient::HandleSocketRecv()
@@ -71,11 +67,15 @@ void URedNetworkClient::HandleSocketRecv()
 			LastRecvTime = NowTime;
 		}
 
-		if (RecvBuffer.Num() == 8) continue;
+		if (RecvBuffer.Num() < 9) continue;
 
 		if (SourcePass.ID == ClientPass.ID && SourcePass.Key == ClientPass.Key)
 		{
-			KCPUnit->Input(RecvBuffer.GetData() + 8, RecvBuffer.Num() - 8);
+			uint8 Channel = RecvBuffer[8];
+
+			EnsureChannelCreated(Channel);
+
+			KCPUnits[Channel]->Input(RecvBuffer.GetData() + 9, RecvBuffer.Num() - 9);
 		}
 	}
 }
@@ -86,36 +86,33 @@ void URedNetworkClient::HandleLoginRecv(const FRedNetworkPass & SourcePass)
 
 	ClientPass = SourcePass;
 
-	KCPUnit = MakeShared<FKCPWrap>(ClientPass.ID, FString::Printf(TEXT("Client-%i"), ClientPass.ID));
-	KCPUnit->SetTurboMode();
-	KCPUnit->GetKCPCB().logmask = KCPLogMask;
-
-	KCPUnit->OutputFunc = [this](const uint8* Data, int32 Count)->int32
-	{
-		UDPSend(Data, Count);
-		return 0;
-	};
+	KCPUnits.SetNum(256);
 
 	OnLogin.Broadcast();
 }
 
 void URedNetworkClient::HandleKCPRecv()
 {
-	while (KCPUnit)
+	for (int32 Channel = 0; Channel < KCPUnits.Num(); ++Channel)
 	{
-		int32 Size = KCPUnit->PeekSize();
+		const TSharedPtr<FKCPWrap>& KCPUnit = KCPUnits[Channel];
 
-		if (Size < 0) break;
+		while (KCPUnit)
+		{
+			int32 Size = KCPUnit->PeekSize();
 
-		RecvBuffer.SetNumUninitialized(Size, false);
+			if (Size < 0) break;
 
-		Size = KCPUnit->Recv(RecvBuffer.GetData(), RecvBuffer.Num());
+			RecvBuffer.SetNumUninitialized(Size, false);
 
-		if (Size < 0) break;
+			Size = KCPUnit->Recv(RecvBuffer.GetData(), RecvBuffer.Num());
 
-		RecvBuffer.SetNumUninitialized(Size, false);
+			if (Size < 0) break;
 
-		OnRecv.Broadcast(RecvBuffer);
+			RecvBuffer.SetNumUninitialized(Size, false);
+
+			OnRecv.Broadcast(Channel, RecvBuffer);
+		}
 	}
 }
 
@@ -125,12 +122,39 @@ void URedNetworkClient::HandleTimeout()
 	{
 		ClientPass.Reset();
 
-		KCPUnit = nullptr;
+		KCPUnits.SetNum(0);
 
 		UE_LOG(LogRedNetwork, Warning, TEXT("Red Network Client timeout."));
 
 		OnUnlogin.Broadcast();
 	}
+}
+
+void URedNetworkClient::EnsureChannelCreated(uint8 Channel)
+{
+	if (KCPUnits[Channel]) return;
+
+	TSharedPtr<FKCPWrap> KCPUnit = MakeShared<FKCPWrap>(0, FString::Printf(TEXT("Client-%i:%i"), ClientPass.ID, Channel));
+	KCPUnit->SetTurboMode();
+	KCPUnit->GetKCPCB().logmask = KCPLogMask;
+
+	KCPUnit->OutputFunc = [this, Channel](const uint8* Data, int32 Count)->int32
+	{
+		SendBuffer.SetNumUninitialized(9, false);
+
+		ClientPass.ToBytes(SendBuffer.GetData());
+
+		SendBuffer[8] = Channel;
+
+		if (Count != 0) SendBuffer.Append(Data, Count);
+
+		int32 BytesSend;
+		SocketPtr->SendTo(SendBuffer.GetData(), SendBuffer.Num(), BytesSend, *ServerAddrPtr);
+
+		return 0;
+	};
+
+	KCPUnits[Channel] = KCPUnit;
 }
 
 void URedNetworkClient::Tick(float DeltaTime)
@@ -213,7 +237,7 @@ void URedNetworkClient::Deactivate()
 
 	ClientPass.Reset();
 
-	KCPUnit = nullptr;
+	KCPUnits.SetNum(0);
 
 	UE_LOG(LogRedNetwork, Log, TEXT("Red Network Client deactivate."));
 

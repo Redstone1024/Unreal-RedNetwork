@@ -8,13 +8,15 @@
 #include "HAL/UnrealMemory.h"
 #include "..\Public\RedNetworkServer.h"
 
-bool URedNetworkServer::Send(int32 ClientID, const TArray<uint8>& Data)
+bool URedNetworkServer::Send(int32 ClientID, uint8 Channel, const TArray<uint8>& Data)
 {
 	if (!IsActive() || !Connections.Contains(ClientID)) return false;
 
 	const FConnectionInfo& Info = Connections[ClientID];
 
-	return Info.KCPUnit->Send(Data.GetData(), Data.Num()) == 0;
+	EnsureChannelCreated(ClientID, Channel);
+
+	return Info.KCPUnits[Channel]->Send(Data.GetData(), Data.Num()) == 0;
 }
 
 TSharedPtr<FInternetAddr> URedNetworkServer::GetSocketAddr() const
@@ -38,29 +40,18 @@ FString URedNetworkServer::GetSocketAddrString() const
 	return Addr ? Addr->ToString(true) : TEXT("");
 }
 
-void URedNetworkServer::UDPSend(int32 ClientID, const uint8* Data, int32 Count)
-{
-	if (!IsActive() || !Connections.Contains(ClientID)) return;
-
-	const FConnectionInfo& Info = Connections[ClientID];
-
-	SendBuffer.SetNumUninitialized(8, false);
-
-	Info.Pass.ToBytes(SendBuffer.GetData());
-
-	if (Count != 0) SendBuffer.Append(Data, Count);
-
-	int32 BytesSend;
-	SocketPtr->SendTo(SendBuffer.GetData(), SendBuffer.Num(), BytesSend, *Info.Addr);
-}
-
 void URedNetworkServer::UpdateKCP()
 {
 	int32 Current = FPlatformTime::Cycles64() / 1000;
 
 	for (auto Info : Connections)
 	{
-		Info.Value.KCPUnit->Update(Current);
+		for (auto KCPUnit : Info.Value.KCPUnits)
+		{
+			if (!KCPUnit) continue;
+
+			KCPUnit->Update(Current);
+		}
 	}
 }
 
@@ -68,7 +59,12 @@ void URedNetworkServer::SendHeartbeat()
 {
 	for (auto Info : Connections)
 	{
-		UDPSend(Info.Key, nullptr, 0);
+		SendBuffer.SetNumUninitialized(8, false);
+
+		Info.Value.Pass.ToBytes(SendBuffer.GetData());
+
+		int32 BytesSend;
+		SocketPtr->SendTo(SendBuffer.GetData(), SendBuffer.Num(), BytesSend, *Info.Value.Addr);
 	}
 }
 
@@ -105,11 +101,15 @@ void URedNetworkServer::HandleSocketRecv()
 
 		Connections[SourcePass.ID].RecvTime = NowTime;
 
-		if (RecvBuffer.Num() == 8) continue;
+		if (RecvBuffer.Num() < 9) continue;
 
 		if (Connections.Contains(SourcePass.ID))
 		{
-			Connections[SourcePass.ID].KCPUnit->Input(RecvBuffer.GetData() + 8, RecvBuffer.Num() - 8);
+			uint8 Channel = RecvBuffer[8];
+
+			EnsureChannelCreated(SourcePass.ID, Channel);
+
+			Connections[SourcePass.ID].KCPUnits[Channel]->Input(RecvBuffer.GetData() + 9, RecvBuffer.Num() - 9);
 		}
 	}
 }
@@ -167,15 +167,7 @@ void URedNetworkServer::RegisterConnection(const FRedNetworkPass& SourcePass, co
 	NewConnections.Heartbeat = FDateTime::MinValue();
 	NewConnections.Addr = SourceAddr;
 
-	NewConnections.KCPUnit = MakeShared<FKCPWrap>(NewConnections.Pass.ID, FString::Printf(TEXT("Server-%i"), NewConnections.Pass.ID));
-	NewConnections.KCPUnit->SetTurboMode();
-	NewConnections.KCPUnit->GetKCPCB().logmask = KCPLogMask;
-
-	NewConnections.KCPUnit->OutputFunc = [this, ID = NewConnections.Pass.ID](const uint8* Data, int32 Count)->int32
-	{
-		UDPSend(ID, Data, Count);
-		return 0;
-	};
+	NewConnections.KCPUnits.SetNum(256);
 
 	Connections.Add(SourcePass.ID, NewConnections);
 
@@ -190,21 +182,26 @@ void URedNetworkServer::HandleKCPRecv()
 {
 	for (auto Info : Connections)
 	{
-		while (Info.Value.KCPUnit)
+		for (int32 Channel = 0; Channel < Info.Value.KCPUnits.Num(); ++Channel)
 		{
-			int32 Size = Info.Value.KCPUnit->PeekSize();
+			const TSharedPtr<FKCPWrap>& KCPUnit = Info.Value.KCPUnits[Channel];
 
-			if (Size < 0) break;
+			while (KCPUnit)
+			{
+				int32 Size = KCPUnit->PeekSize();
 
-			RecvBuffer.SetNumUninitialized(Size, false);
+				if (Size < 0) break;
 
-			Size = Info.Value.KCPUnit->Recv(RecvBuffer.GetData(), RecvBuffer.Num());
+				RecvBuffer.SetNumUninitialized(Size, false);
 
-			if (Size < 0) break;
+				Size = KCPUnit->Recv(RecvBuffer.GetData(), RecvBuffer.Num());
 
-			RecvBuffer.SetNumUninitialized(Size, false);
+				if (Size < 0) break;
 
-			OnRecv.Broadcast(Info.Key, RecvBuffer);
+				RecvBuffer.SetNumUninitialized(Size, false);
+
+				OnRecv.Broadcast(Info.Key, Channel, RecvBuffer);
+			}
 		}
 	}
 }
@@ -241,6 +238,37 @@ void URedNetworkServer::HandleExpiredConnection()
 			OnUnlogin.Broadcast(ID);
 		}
 	}
+}
+
+void URedNetworkServer::EnsureChannelCreated(int32 ClientID, uint8 Channel)
+{
+	FConnectionInfo& Info = Connections[ClientID];
+
+	if (Info.KCPUnits[Channel]) return;
+
+	TSharedPtr<FKCPWrap> KCPUnit = MakeShared<FKCPWrap>(0, FString::Printf(TEXT("Server-%i:%i"), ClientID, Channel));
+	KCPUnit->SetTurboMode();
+	KCPUnit->GetKCPCB().logmask = KCPLogMask;
+
+	KCPUnit->OutputFunc = [this, ClientID, Channel](const uint8* Data, int32 Count)->int32
+	{
+		const FConnectionInfo& Info = Connections[ClientID];
+
+		SendBuffer.SetNumUninitialized(9, false);
+
+		Info.Pass.ToBytes(SendBuffer.GetData());
+
+		SendBuffer[8] = Channel;
+
+		if (Count != 0) SendBuffer.Append(Data, Count);
+
+		int32 BytesSend;
+		SocketPtr->SendTo(SendBuffer.GetData(), SendBuffer.Num(), BytesSend, *Info.Addr);
+
+		return 0;
+	};
+
+	Info.KCPUnits[Channel] = KCPUnit;
 }
 
 void URedNetworkServer::Tick(float DeltaTime)

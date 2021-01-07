@@ -17,7 +17,7 @@ class REDNETWORK_API URedNetworkClient : public UObject, public FTickableGameObj
 public:
 
 	DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE(FLoginSignature, URedNetworkClient, OnLogin);
-	DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE_OneParam(FRecvSignature, URedNetworkClient, OnRecv, const TArray<uint8>&, Data);
+	DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE_TwoParams(FRecvSignature, URedNetworkClient, OnRecv, uint8, Channel, const TArray<uint8>&, Data);
 	DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE(FUnloginSignature, URedNetworkClient, OnUnlogin);
 
 public:
@@ -46,7 +46,7 @@ public:
 	bool IsLogged() const { return ClientPass.IsValid(); }
 
 	UFUNCTION(BlueprintCallable, Category = "Red|Network")
-	bool Send(const TArray<uint8>& Data);
+	bool Send(uint8 Channel, const TArray<uint8>& Data);
 
 public:
 
@@ -78,9 +78,7 @@ private:
 	FDateTime LastRecvTime;
 	FDateTime LastHeartbeat;
 
-	TSharedPtr<FKCPWrap> KCPUnit;
-
-	void UDPSend(const uint8* Data, int32 Count);
+	TArray<TSharedPtr<FKCPWrap>> KCPUnits;
 
 	FDateTime NowTime;
 
@@ -90,6 +88,8 @@ private:
 	void HandleLoginRecv(const FRedNetworkPass& SourcePass);
 	void HandleKCPRecv();
 	void HandleTimeout();
+
+	void EnsureChannelCreated(uint8 Channel);
 
 public:
 
